@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Ziada POS — Backend Dependencies
+# Python 3.11+  |  Django 5.x  |  DRF 3.15
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core framework ────────────────────────────────────────────────────────────
+Django==5.0.6
+djangorestframework==3.15.2
+
+# ── Database driver ───────────────────────────────────────────────────────────
+psycopg2-binary==2.9.9        # PostgreSQL adapter
+dj-database-url==2.1.0        # Parse DATABASE_URL env var easily
+
+# ── Authentication ────────────────────────────────────────────────────────────
+djangorestframework-simplejwt==5.3.1   # JWT access + refresh tokens
+django-allauth==0.63.3                 # Optional: social auth later
+
+# ── CORS / Security ───────────────────────────────────────────────────────────
+django-cors-headers==4.3.1    # Allow Next.js frontend to call the API
+
+# ── Environment config ────────────────────────────────────────────────────────
+python-decouple==3.8          # Read .env file, type-safe config
+
+# ── AI / LLM ─────────────────────────────────────────────────────────────────
+openai==1.35.3                # OpenAI SDK — used to hit OpenRouter's API
+                              # (OpenRouter is OpenAI-compatible)
+httpx==0.27.0                 # Async HTTP — used by openai SDK
+
+# ── Filtering / querying ──────────────────────────────────────────────────────
+django-filter==24.2           # DRF filter backend (querystring filtering)
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+Pillow==10.3.0                # Image handling (product images later)
+django-extensions==3.2.3      # shell_plus, RunScript, etc.
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.2.2
+pytest-django==4.8.0          # Django integration for pytest
+factory-boy==3.3.0            # Model factories for test data
+faker==25.8.0                 # Fake data generation in factories
+
+# ── Dev / DX ─────────────────────────────────────────────────────────────────
+black==24.4.2                 # Code formatter
+isort==5.13.2                 # Import sorter
+flake8==7.0.0                 # Linter
