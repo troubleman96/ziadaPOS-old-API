@@ -94,6 +94,10 @@ LOCAL_APPS = [
     "apps.tracking.apps.TrackingConfig",
     # Store reviews — star ratings shown on landing page
     "apps.reviews.apps.ReviewsConfig",
+    # Email notifications: welcome, confirmation, daily sales report
+    "apps.notifications.apps.NotificationsConfig",
+    # APScheduler job store
+    "django_apscheduler",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -289,6 +293,34 @@ OPENROUTER_SITE_NAME = config("OPENROUTER_SITE_NAME", default="Ziada POS")
 # Maximum tokens to use for AI context window
 # GPT-4o-mini supports 128k context — we use a fraction of that
 AI_MAX_CONTEXT_TOKENS = 4000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Email (ZohoMail SMTP)
+# ─────────────────────────────────────────────────────────────────────────────
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST          = config("EMAIL_HOST",          default="smtp.zoho.com")
+EMAIL_PORT          = config("EMAIL_PORT",          cast=int, default=587)
+EMAIL_USE_TLS       = config("EMAIL_USE_TLS",       cast=bool, default=True)
+EMAIL_USE_SSL       = config("EMAIL_USE_SSL",       cast=bool, default=False)
+EMAIL_HOST_USER     = config("EMAIL_HOST_USER",     default="noreply@ziadapos.com")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL  = config("DEFAULT_FROM_EMAIL",  default="Ziada POS <noreply@ziadapos.com>")
+SERVER_EMAIL        = config("SERVER_EMAIL",        default="noreply@ziadapos.com")
+
+# Public site URL used in email links
+SITE_URL = config("SITE_URL", default="https://app.ziadapos.com")
+
+# Daily sales report schedule (Africa/Dar_es_Salaam, 24h clock)
+DAILY_REPORT_HOUR   = config("DAILY_REPORT_HOUR",   cast=int, default=22)
+DAILY_REPORT_MINUTE = config("DAILY_REPORT_MINUTE", cast=int, default=0)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# APScheduler
+# ─────────────────────────────────────────────────────────────────────────────
+
+APSCHEDULER_DATETIME_FORMAT = "N j, Y, f:s a"
+APSCHEDULER_RUN_NOW_TIMEOUT = 25  # seconds
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ziada application-level constants

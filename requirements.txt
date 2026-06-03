@@ -43,3 +43,8 @@ faker==25.8.0                 # Fake data generation in factories
 black==24.4.2                 # Code formatter
 isort==5.13.2                 # Import sorter
 flake8==7.0.0                 # Linter
+
+# ── Scheduling ───────────────────────────────────────────────────────────────
+apscheduler==3.11.2           # Background job scheduler (daily sales report)
+django-apscheduler==0.7.0     # Django ORM job store + admin for APScheduler
+tzlocal==5.3.1                # Local timezone detection (APScheduler dependency)

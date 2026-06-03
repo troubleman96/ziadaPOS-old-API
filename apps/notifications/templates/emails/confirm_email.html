@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Confirm your email — Ziada POS</title>
+  <style>
+    body { margin:0; padding:0; background:#0f1117; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:#e2e8f0; }
+    .wrap { max-width:520px; margin:40px auto; padding:0 16px; }
+    .card { background:#1a1d27; border:1px solid #2a2d3a; border-radius:12px; overflow:hidden; }
+    .header { padding:28px 36px; border-bottom:1px solid #2a2d3a; display:flex; align-items:center; gap:12px; }
+    .logo-mark { width:36px; height:36px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border-radius:8px; display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:16px; }
+    .brand { font-size:16px; font-weight:600; color:#e2e8f0; }
+    .body { padding:32px 36px; text-align:center; }
+    .icon { font-size:40px; margin-bottom:16px; }
+    .title { font-size:20px; font-weight:600; margin:0 0 12px; }
+    .text  { font-size:14px; color:#94a3b8; line-height:1.65; margin:0 0 28px; }
+    .btn   { display:inline-block; background:#6366f1; color:#fff; text-decoration:none; padding:14px 36px; border-radius:8px; font-size:15px; font-weight:600; }
+    .hint  { font-size:12px; color:#475569; margin-top:20px; line-height:1.6; }
+    .hint code { background:#0f1117; padding:2px 6px; border-radius:4px; color:#94a3b8; font-size:11px; word-break:break-all; }
+    .footer { padding:18px 36px; text-align:center; color:#475569; font-size:12px; border-top:1px solid #2a2d3a; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <span class="logo-mark">Z</span>
+        <span class="brand">Ziada POS</span>
+      </div>
+      <div class="body">
+        <div class="icon">✉️</div>
+        <h2 class="title">Confirm your email</h2>
+        <p class="text">
+          Click the button below to verify <strong style="color:#e2e8f0">{{ email }}</strong>
+          and complete your Ziada POS setup.
+        </p>
+        <a class="btn" href="{{ confirm_url }}">Confirm email address</a>
+        <p class="hint">
+          This link expires in <strong>72 hours</strong>.<br />
+          If the button doesn't work, copy and paste this link:<br />
+          <code>{{ confirm_url }}</code>
+        </p>
+      </div>
+      <div class="footer">
+        Ziada Technologies Ltd · Dar es Salaam · <a href="mailto:support@ziadapos.com" style="color:#6366f1;">support@ziadapos.com</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

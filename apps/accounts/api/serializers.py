@@ -296,6 +296,14 @@ class RegistrationSerializer(serializers.Serializer):
         # 7. Generate JWT tokens so user is auto-logged in after registration
         refresh = RefreshToken.for_user(user)
 
+        # 8. Send welcome + email confirmation (fire-and-forget; never block registration)
+        if user.email:
+            try:
+                from apps.notifications.emails import send_welcome_email
+                send_welcome_email(user)
+            except Exception:
+                pass  # Never fail registration because of email
+
         return {
             "user":         user,
             "organisation": org,

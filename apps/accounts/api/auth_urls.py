@@ -20,7 +20,7 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView,
 )
 
-from .views import PhoneLoginView, RegisterView
+from .views import ConfirmEmailView, PhoneLoginView, RegisterView, ResendConfirmationView
 
 urlpatterns = [
     # Self-registration — creates org, store, owner user, trial subscription
@@ -34,4 +34,10 @@ urlpatterns = [
 
     # Verify — POST { token } → 200 OK or 401
     path("verify/",   TokenVerifyView.as_view(),  name="token_verify"),
+
+    # Email confirmation — GET ?token=<uuid> (link from the welcome email)
+    path("confirm-email/",        ConfirmEmailView.as_view(),       name="confirm-email"),
+
+    # Resend confirmation — POST (authenticated) when user hasn't confirmed yet
+    path("resend-confirmation/",  ResendConfirmationView.as_view(), name="resend-confirmation"),
 ]

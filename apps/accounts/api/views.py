@@ -601,3 +601,69 @@ class AICreditView(APIView):
             data=AICreditSerializer(credit).data,
             message="AI credits retrieved.",
         )
+
+
+# ── Email Confirmation ────────────────────────────────────────────────────────
+
+class ConfirmEmailView(APIView):
+    """
+    GET /api/v1/auth/confirm-email/?token=<uuid>
+
+    Validates the one-use token sent in the welcome / confirmation email,
+    marks the user's email as verified, and deletes the token.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.notifications.models import EmailVerificationToken
+
+        raw_token = request.query_params.get("token", "").strip()
+        if not raw_token:
+            return error_response("Missing token.", status=400)
+
+        try:
+            token_obj = EmailVerificationToken.objects.select_related("user").get(
+                token=raw_token
+            )
+        except (EmailVerificationToken.DoesNotExist, ValueError):
+            return error_response("Invalid or expired confirmation link.", status=400)
+
+        if token_obj.is_expired():
+            token_obj.delete()
+            return error_response("This confirmation link has expired. Request a new one.", status=400)
+
+        user = token_obj.user
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified", "updated_at"])
+        token_obj.delete()
+
+        logger.info("Email confirmed for user %s.", user.username)
+        return success_response(message="Email confirmed. You're all set!")
+
+
+class ResendConfirmationView(APIView):
+    """
+    POST /api/v1/auth/resend-confirmation/
+
+    Resends the email confirmation link to the authenticated user.
+    Silently ignored if email is already verified.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        if not user.email:
+            return error_response("No email address on this account.", status=400)
+
+        if user.is_email_verified:
+            return success_response(message="Your email is already confirmed.")
+
+        from apps.notifications.emails import send_confirmation_email
+        ok = send_confirmation_email(user)
+
+        if ok:
+            return success_response(message="Confirmation email sent. Check your inbox.")
+        return error_response("Failed to send confirmation email. Please try again.", status=500)
