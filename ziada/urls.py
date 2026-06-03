@@ -75,6 +75,7 @@ urlpatterns = [
         path("notebook/",      include("apps.notebook.api.urls")),
         path("staff/",         include("apps.staff.api.urls")),
         path("subscriptions/", include("apps.subscriptions.api.urls")),
+        path("reviews/",       include("apps.reviews.api.urls")),
     ])),
 ]
 

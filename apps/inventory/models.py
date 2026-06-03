@@ -46,6 +46,12 @@ class Category(BaseModel):
         help_text="Display order in filter pills (0 = first).",
     )
 
+    # Whether this is a pre-seeded global category visible to all users
+    is_global = models.BooleanField(
+        default=False,
+        help_text="Pre-seeded global category visible to all users.",
+    )
+
     def __str__(self):
         return self.name
 

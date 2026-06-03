@@ -92,6 +92,8 @@ LOCAL_APPS = [
     "apps.subscriptions.apps.SubscriptionsConfig",
     # API request tracking and admin dashboard analytics
     "apps.tracking.apps.TrackingConfig",
+    # Store reviews — star ratings shown on landing page
+    "apps.reviews.apps.ReviewsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

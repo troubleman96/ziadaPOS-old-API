@@ -7,5 +7,22 @@ class InventoryConfig(AppConfig):
     verbose_name = "Inventory"
 
     def ready(self):
-        # Import signals so they register when the app loads
         import apps.inventory.signals  # noqa: F401
+
+        from django.db.models.signals import post_migrate
+        post_migrate.connect(_seed_global_categories_on_migrate, sender=self)
+
+
+def _seed_global_categories_on_migrate(sender, **kwargs):
+    """Auto-seed global categories after every migration run (idempotent)."""
+    try:
+        from apps.inventory.models import Category
+        from apps.inventory.management.commands.seed_global_categories import GLOBAL_CATEGORIES
+
+        for name, sort_order in GLOBAL_CATEGORIES:
+            Category.objects.update_or_create(
+                name=name,
+                defaults={"sort_order": sort_order, "is_global": True},
+            )
+    except Exception:
+        pass

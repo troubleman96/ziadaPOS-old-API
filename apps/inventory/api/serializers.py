@@ -23,8 +23,8 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ["id", "name", "description", "sort_order", "count", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = ["id", "name", "description", "sort_order", "is_global", "count", "created_at"]
+        read_only_fields = ["id", "is_global", "created_at"]
 
     def get_count(self, obj):
         return obj.products.filter(is_active=True).count()

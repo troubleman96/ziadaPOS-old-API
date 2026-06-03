@@ -10,6 +10,8 @@ Category auto-create:
   field). Neither workflow requires pre-seeding categories through admin.
 """
 
+import csv
+import io
 import logging
 
 from django.db import transaction as db_transaction
@@ -73,7 +75,11 @@ class CategoryViewSet(ModelViewSet):
         return CategorySerializer
 
     def list(self, request, *args, **kwargs):
-        serializer = CategorySerializer(self.get_queryset(), many=True)
+        qs = self.get_queryset()
+        is_global = request.query_params.get("is_global")
+        if is_global is not None:
+            qs = qs.filter(is_global=is_global.lower() == "true")
+        serializer = CategorySerializer(qs, many=True)
         return success_response(
             data=serializer.data,
             message=f"{len(serializer.data)} categories.",
@@ -350,6 +356,152 @@ class ProductViewSet(ModelViewSet):
         return success_response(
             data=ProductSerializer(product).data,
             message=f"Stock adjusted by {delta:+d}. New stock: {product.stock}.",
+        )
+
+    @action(
+        detail=False, methods=["post"], url_path="bulk-upload",
+        permission_classes=[IsAuthenticated, IsStoreManager],
+    )
+    def bulk_upload(self, request):
+        """
+        POST /api/v1/inventory/products/bulk-upload/
+
+        Accepts multipart/form-data with a 'file' field (CSV).
+        CSV columns (first row = header, case-insensitive):
+          name, sku, category, price, cost, unit, barcode, stock, min_stock, max_stock
+
+        Processing:
+          - Each row is committed independently — a bad row is skipped with an error entry.
+          - category uses category_name_input logic (auto-creates if missing).
+          - Duplicate SKU within the store → row is skipped.
+
+        Response:
+          { created: N, failed: M, errors: [{ row: N, message: "..." }] }
+        """
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            return error_response("No file uploaded. Provide a CSV in the 'file' field.", status=400)
+
+        if not file_obj.name.lower().endswith(".csv"):
+            return error_response("Only CSV files are accepted.", status=400)
+
+        try:
+            content = file_obj.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return error_response("Could not decode the file. Please save it as UTF-8.", status=400)
+
+        reader = csv.DictReader(io.StringIO(content))
+
+        # Normalise header names to lowercase stripped strings
+        if reader.fieldnames is None:
+            return error_response("CSV file appears to be empty.", status=400)
+
+        required_columns = {"name", "price", "cost"}
+        header_map = {h.strip().lower(): h for h in reader.fieldnames}
+        missing = required_columns - set(header_map.keys())
+        if missing:
+            return error_response(
+                f"Missing required CSV columns: {', '.join(sorted(missing))}.",
+                status=400,
+            )
+
+        def get_col(row, col, default=""):
+            key = header_map.get(col)
+            return row.get(key, default).strip() if key else default
+
+        created_count = 0
+        errors = []
+
+        for row_num, row in enumerate(reader, start=2):  # row 1 = header
+            name = get_col(row, "name")
+            if not name:
+                errors.append({"row": row_num, "message": "Product name is required."})
+                continue
+
+            sku        = get_col(row, "sku") or None
+            category   = get_col(row, "category")
+            unit       = get_col(row, "unit") or "pcs"
+            barcode    = get_col(row, "barcode") or ""
+            raw_price  = get_col(row, "price")
+            raw_cost   = get_col(row, "cost")
+            raw_stock  = get_col(row, "stock") or "0"
+            raw_min    = get_col(row, "min_stock") or "0"
+            raw_max    = get_col(row, "max_stock") or "100"
+
+            # Validate numeric fields
+            try:
+                price = int(float(raw_price))
+            except (ValueError, TypeError):
+                errors.append({"row": row_num, "message": f"Invalid price: '{raw_price}'."})
+                continue
+            try:
+                cost = int(float(raw_cost))
+            except (ValueError, TypeError):
+                errors.append({"row": row_num, "message": f"Invalid cost: '{raw_cost}'."})
+                continue
+
+            if price <= 0:
+                errors.append({"row": row_num, "message": "Selling price must be greater than zero."})
+                continue
+            if cost <= 0:
+                errors.append({"row": row_num, "message": "Cost must be greater than zero."})
+                continue
+            if cost >= price:
+                errors.append({"row": row_num, "message": "Cost must be less than the selling price."})
+                continue
+
+            try:
+                stock     = int(float(raw_stock))
+                min_stock = int(float(raw_min))
+                max_stock = int(float(raw_max))
+            except (ValueError, TypeError):
+                errors.append({"row": row_num, "message": "stock / min_stock / max_stock must be integers."})
+                continue
+
+            try:
+                with db_transaction.atomic():
+                    # Resolve category (case-insensitive, create if missing)
+                    cat_obj = None
+                    if category:
+                        cat_obj = Category.objects.filter(name__iexact=category).first()
+                        if not cat_obj:
+                            cat_obj = Category.objects.create(name=category)
+
+                    # Auto-generate SKU if not provided
+                    if not sku:
+                        import uuid
+                        sku = f"SKU-{uuid.uuid4().hex[:6].upper()}"
+
+                    # Check duplicate SKU in this store
+                    if Product.objects.filter(store=request.user.store, sku=sku).exists():
+                        errors.append({"row": row_num, "message": f"SKU '{sku}' already exists in this store."})
+                        continue
+
+                    Product.objects.create(
+                        store=request.user.store,
+                        name=name,
+                        sku=sku,
+                        barcode=barcode,
+                        category=cat_obj,
+                        unit=unit,
+                        price=price,
+                        cost=cost,
+                        stock=stock,
+                        min_stock=min_stock,
+                        max_stock=max_stock,
+                    )
+                    created_count += 1
+
+            except Exception as exc:
+                errors.append({"row": row_num, "message": str(exc)})
+
+        logger.info(
+            "Bulk upload by user %s: %d created, %d failed.",
+            request.user.username, created_count, len(errors),
+        )
+        return success_response(
+            data={"created": created_count, "failed": len(errors), "errors": errors},
+            message=f"Bulk upload complete: {created_count} created, {len(errors)} failed.",
         )
 
     @action(detail=True, methods=["get"], url_path="adjustments")
