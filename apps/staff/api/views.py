@@ -322,10 +322,10 @@ class StaffViewSet(ViewSet):
         except User.DoesNotExist:
             return error_response("Staff member not found.", status=404)
 
-        # Owners cannot have their permissions stripped by a manager
-        if member.role == User.ROLE_ADMIN and request.user.role == User.ROLE_MANAGER:
+        # Owners cannot have their permissions stripped by staff
+        if member.role in (User.ROLE_ADMIN, User.ROLE_OWNER) and request.user.role == User.ROLE_STAFF:
             return error_response(
-                "Managers cannot modify Owner permissions.", status=403
+                "Staff cannot modify Owner permissions.", status=403
             )
 
         serializer = PermissionsUpdateSerializer(member, data=request.data, partial=True)

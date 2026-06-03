@@ -19,16 +19,18 @@ from apps.customers.models import Customer
 
 
 def make_base_fixtures():
-    """Create org, store, manager, and cashier users."""
-    org     = Organisation.objects.create(name="Test Org")
-    store   = Store.objects.create(organisation=org, name="Main Store", area="Kariakoo")
-    manager = User.objects.create_user(
-        username="mgr1", password="pass123!", role="manager", store=store
+    """Create org, store, owner, and staff users."""
+    org   = Organisation.objects.create(name="Test Org")
+    store = Store.objects.create(organisation=org, name="Main Store", area="Kariakoo")
+    owner = User.objects.create_user(
+        username="0712000001", phone="0712000001", password="pass123!",
+        role="owner", store=store,
     )
-    cashier = User.objects.create_user(
-        username="cashier1", password="pass123!", role="cashier", store=store
+    staff = User.objects.create_user(
+        username="0712000002", phone="0712000002", password="pass123!",
+        role="staff", store=store,
     )
-    return org, store, manager, cashier
+    return org, store, owner, staff
 
 
 def make_customer(store, name="Fatuma Ally", phone="+255 714 100 001"):
@@ -36,10 +38,10 @@ def make_customer(store, name="Fatuma Ally", phone="+255 714 100 001"):
     return Customer.objects.create(store=store, name=name, phone=phone)
 
 
-def auth(client, username, password="pass123!"):
-    """Authenticate an APIClient."""
-    resp = client.post(reverse("token_obtain_pair"), {"username": username, "password": password})
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+def auth(client, phone, password="pass123!"):
+    """Authenticate an APIClient via phone + password."""
+    resp = client.post(reverse("login"), {"phone": phone, "password": password})
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
     return client
 
 
@@ -114,7 +116,7 @@ class RecordPaymentTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
 
         self.customer = make_customer(self.store)
         # Create an open tab for 50,000 TZS
@@ -211,7 +213,7 @@ class SendReminderTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, _, _ = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
         self.customer = make_customer(self.store)
         self.customer.open_credit = 20000
         self.customer.save()
@@ -253,7 +255,7 @@ class AddNoteTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, _, _ = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
         self.customer = make_customer(self.store)
 
     def test_add_internal_note(self):
@@ -273,7 +275,7 @@ class WriteOffTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, self.cashier = make_base_fixtures()
-        auth(self.client, "mgr1")  # Managers only
+        auth(self.client, "0712000001")  # Owner only
 
         self.customer = make_customer(self.store)
         self.tab = CreditTab.objects.create(
@@ -309,7 +311,7 @@ class WriteOffTests(TestCase):
 
     def test_cashier_cannot_write_off(self):
         """Cashier does not have permission to write off tabs."""
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
         resp = self.client.post(
             reverse("credits-write-off", args=[self.tab.id]),
             {"reason": "Not allowed"},
@@ -335,7 +337,7 @@ class CreditsDashboardTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, _, _ = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
 
         self.customer = make_customer(self.store, name="Juma Kifupi", phone="+255 712 990 102")
         self.customer.open_credit = 84200

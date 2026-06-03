@@ -152,15 +152,15 @@ class StaffCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         import secrets
 
-        role = validated_data.get("role", User.ROLE_CASHIER)
+        role = validated_data.get("role", User.ROLE_STAFF)
 
         # Default permissions by role if not supplied
         validated_data.setdefault(
-            "can_refund", role in (User.ROLE_ADMIN, User.ROLE_MANAGER)
+            "can_refund", role in (User.ROLE_ADMIN, User.ROLE_OWNER)
         )
         validated_data.setdefault("can_discount", True)
         validated_data.setdefault(
-            "can_view_reports", role in (User.ROLE_ADMIN, User.ROLE_MANAGER)
+            "can_view_reports", role in (User.ROLE_ADMIN, User.ROLE_OWNER)
         )
 
         # Auto-generate a strong password if none provided

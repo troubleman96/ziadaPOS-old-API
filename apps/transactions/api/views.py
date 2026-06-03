@@ -439,6 +439,7 @@ class CompleteSaleView(APIView):
             from apps.credits.models import CreditTab
             CreditTab.objects.create(
                 customer=customer_obj,
+                store=transaction.store,
                 transaction=transaction,
                 amount=total,
                 cashier=cashier,

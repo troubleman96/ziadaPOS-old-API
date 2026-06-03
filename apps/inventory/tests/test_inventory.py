@@ -25,9 +25,10 @@ def make_fixtures():
     cat   = Category.objects.create(name="Grocery", sort_order=1)
     sup   = Supplier.objects.create(name="Test Supplier", store=store, organisation=org)
     user  = User.objects.create_user(
-        username="manager",
+        username="0712000001",
+        phone="0712000001",
         password="pass123!",
-        role="manager",
+        role="owner",
         store=store,
     )
     return org, store, cat, sup, user
@@ -61,9 +62,9 @@ class CategoryTests(TestCase):
         self.client = APIClient()
         _, self.store, _, _, self.user = make_fixtures()
         # Authenticate
-        resp = self.client.post(reverse("token_obtain_pair"),
-                                {"username": "manager", "password": "pass123!"})
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+        resp = self.client.post(reverse("login"),
+                                {"phone": "0712000001", "password": "pass123!"})
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
 
     def test_list_categories(self):
         """GET /api/v1/inventory/categories/ returns all categories."""
@@ -85,9 +86,9 @@ class ProductTests(TestCase):
         _, self.store, self.cat, self.sup, self.user = make_fixtures()
         self.product = make_product(self.store, self.cat, self.sup)
         # Authenticate
-        resp = self.client.post(reverse("token_obtain_pair"),
-                                {"username": "manager", "password": "pass123!"})
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+        resp = self.client.post(reverse("login"),
+                                {"phone": "0712000001", "password": "pass123!"})
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
 
     def test_list_products(self):
         """GET /api/v1/inventory/products/ returns paginated list."""

@@ -5,26 +5,31 @@ Data models for user accounts, organisations, and stores.
 
 Referenced UI pages:
   - Sidenav: shows store switcher ("Duka Kuu · Kariakoo · 3 stores")
-  - Sidenav footer: shows logged-in user ("Hamisi Mwakapaga · Owner · admin")
+  - Sidenav footer: shows logged-in user ("Hamisi Mwakapaga · Owner")
   - Dashboard: "Good afternoon, Hamisi" personalisation
   - AI credits: "2,418 / 5,000" shown in sidenav footer
+  - Profile page: phone/email verification reminder banners
 
 Model hierarchy:
-  Organisation  (the business/company)
-    └── Store   (physical locations)
-         └── User (staff member, assigned to one store)
+  Organisation  (the registered business)
+    └── Store   (physical locations — 3 bundled, extras paid)
+         └── User (staff member assigned to one store)
+  User (owner role links directly to Organisation AND may have a main store)
 
-Key design decisions:
-  - Custom User model (AbstractUser) — allows adding role, store FK, etc.
-  - Role-based access: admin > manager > cashier
-  - AI credits tracked per organisation per month
-  - Store has its own tax ID (TIN) for receipts
+Role definitions:
+  admin  → Cameltech system admin (us). Full platform access.
+  owner  → Registered business owner. Manages their org + all stores.
+  staff  → Store employee. Scoped to one store, permissions set by owner.
 """
 
+import random
+
 from django.contrib.auth.models import AbstractUser
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
 
+from apps.accounts.tanzania import BUSINESS_TYPE_CHOICES, REGION_CHOICES
 from apps.core.models import BaseModel
 
 
@@ -32,29 +37,27 @@ from apps.core.models import BaseModel
 
 class Organisation(BaseModel):
     """
-    The top-level entity — a business that owns one or more stores.
+    The top-level entity — a registered business that owns one or more stores.
 
-    In the UI: "Duka Kuu" is the organisation. It shows in the sidenav
-    store switcher header.
+    Created automatically during owner registration together with:
+      - The owner User record
+      - The main Store record
+      - A trial Subscription record
 
-    One Organisation can have multiple Stores (multi-branch support).
+    In the UI: "Duka Kuu" is the organisation name shown in the sidenav.
     """
 
-    # Business trading name shown in the sidenav
     name = models.CharField(
         max_length=200,
-        help_text="Trading name of the organisation, e.g. 'Duka Kuu'.",
+        help_text="Trading/shop name of the organisation, e.g. 'Duka Kuu'.",
     )
 
-    # Legal/registered name (may differ from trading name)
     legal_name = models.CharField(
         max_length=300,
         blank=True,
-        help_text="Full legal registered name.",
+        help_text="Full legal registered name (may differ from trading name).",
     )
 
-    # Tanzania Revenue Authority (TRA) Tax Identification Number
-    # Shown on receipts: "Tin: 109-882-461"
     tin = models.CharField(
         max_length=50,
         blank=True,
@@ -62,51 +65,85 @@ class Organisation(BaseModel):
         help_text="Tanzania TRA Tax Identification Number (printed on receipts).",
     )
 
-    # Country / locale — defaults to Tanzania
+    # Business type — determines which category presets are seeded at registration
+    business_type = models.CharField(
+        max_length=20,
+        choices=BUSINESS_TYPE_CHOICES,
+        default="retail",
+        help_text="Type of business (determines pre-configured POS categories).",
+    )
+
+    # Tanzania administrative region
+    region = models.CharField(
+        max_length=100,
+        choices=REGION_CHOICES,
+        blank=True,
+        help_text="Tanzania region where this business is based.",
+    )
+
     country = models.CharField(
         max_length=2,
         default="TZ",
         help_text="ISO 3166-1 alpha-2 country code.",
     )
 
-    # Currency — all monetary values stored as integers (TZS = no sub-units)
     currency = models.CharField(
         max_length=3,
         default="TZS",
         help_text="ISO 4217 currency code.",
     )
 
-    # Monthly AI credit allocation (shown in sidenav footer)
-    ai_credits_monthly = models.PositiveIntegerField(
-        default=5000,
-        help_text="Total AI credits allocated per month (e.g. 5000).",
+    # Maximum stores this organisation can have (3 bundled + extras paid via Subscription)
+    max_stores = models.PositiveSmallIntegerField(
+        default=3,
+        help_text="Maximum stores allowed. Updated by subscription system when extra stores are purchased.",
     )
 
-    # Plan tier — controls feature access
-    PLAN_FREE = "free"
-    PLAN_PRO = "pro"
+    ai_credits_monthly = models.PositiveIntegerField(
+        default=5000,
+        help_text="Total AI credits allocated per month.",
+    )
+
+    # Plan tier — synced from Subscription.status when admin activates
+    PLAN_FREE       = "free"
+    PLAN_PRO        = "pro"
     PLAN_ENTERPRISE = "enterprise"
     PLAN_CHOICES = [
-        (PLAN_FREE, "Free"),
-        (PLAN_PRO, "Pro"),
+        (PLAN_FREE,       "Free / Trial"),
+        (PLAN_PRO,        "Pro"),
         (PLAN_ENTERPRISE, "Enterprise"),
     ]
     plan = models.CharField(
         max_length=20,
         choices=PLAN_CHOICES,
         default=PLAN_FREE,
-        help_text="Subscription plan tier.",
+        help_text="Subscription plan tier. Synced by the subscription system.",
     )
 
-    # When the trial ends (shown in POS trial banner)
+    # Trial expiry — kept for fast subscription checks without joining Subscription table
     trial_ends_at = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="Trial expiry datetime (null = not on trial).",
+        help_text="Trial expiry datetime (set on registration, null after upgrade).",
     )
 
     def __str__(self):
         return self.name
+
+    @property
+    def active_subscription(self):
+        """Return the latest active subscription, or None."""
+        return (
+            self.subscriptions
+            .filter(status__in=("trial", "active"))
+            .order_by("-created_at")
+            .first()
+        )
+
+    @property
+    def has_active_subscription(self):
+        sub = self.active_subscription
+        return sub is not None and sub.is_active_now
 
     class Meta:
         verbose_name = "Organisation"
@@ -120,14 +157,14 @@ class Store(BaseModel):
     """
     A physical store location belonging to an Organisation.
 
+    Owners get 3 stores bundled in their base package. Additional stores
+    cost 12,000 TZS/month each and must be approved by a Cameltech admin.
+
     In the UI:
-      - Sidenav: "Kariakoo · 3 stores" (the "3" means 3 Store records)
-      - Dashboard: "Duka Kuu — Kariakoo" in page title
+      - Sidenav: "Kariakoo" (the area) with store switcher
       - Receipts: "DUKA KUU — KARIAKOO" printed at top
-      - Transactions: "store: 'Duka Kuu — Kariakoo'" field
     """
 
-    # Parent organisation
     organisation = models.ForeignKey(
         Organisation,
         on_delete=models.CASCADE,
@@ -135,84 +172,78 @@ class Store(BaseModel):
         help_text="Organisation this store belongs to.",
     )
 
-    # Store display name (shown in sidenav and receipts)
     name = models.CharField(
         max_length=200,
-        help_text="Store name shown in the UI, e.g. 'Duka Kuu — Kariakoo'.",
+        help_text="Store name shown in the UI, e.g. 'Kariakoo Branch'.",
     )
 
-    # Short code used in transaction IDs (e.g. "KRC" → TXN-KRC-2043)
     code = models.CharField(
         max_length=10,
         blank=True,
-        help_text="Short store code for transaction IDs.",
+        help_text="Short store code for transaction IDs, e.g. 'KRC' → TXN-KRC-2043.",
     )
 
-    # Physical address
     address = models.TextField(
         blank=True,
         help_text="Full physical address of the store.",
     )
 
-    # Neighbourhood / area (shown in sidenav: "Kariakoo")
     area = models.CharField(
         max_length=100,
         blank=True,
         help_text="Area / neighbourhood, e.g. 'Kariakoo'.",
     )
 
-    # Tanzania phone number
     phone = models.CharField(
         max_length=30,
         blank=True,
         help_text="Store contact phone number.",
     )
 
-    # Number of tills/registers (shown in POS: "Till #2")
     till_count = models.PositiveSmallIntegerField(
         default=1,
         help_text="Number of POS tills/registers in this store.",
     )
 
-    # Contact email for this location
     email = models.EmailField(
         blank=True,
-        help_text="Store email address, e.g. 'kariakoo@dukakuu.co.tz'.",
+        help_text="Store contact email address.",
     )
 
-    # Trading hours shown in the stores UI
     open_hours = models.CharField(
         max_length=50,
         blank=True,
         default="7:00 AM – 9:00 PM",
-        help_text="Opening hours label shown in the UI, e.g. '7:00 AM – 9:00 PM'.",
+        help_text="Opening hours label shown in the UI.",
     )
 
-    # UI colour for store avatar / sparkline
     color = models.CharField(
         max_length=20,
         blank=True,
         default="#6366f1",
-        help_text="Hex colour used for store avatar and sparkline in the UI.",
+        help_text="Hex colour for store avatar and sparkline.",
     )
 
-    # Operational status — distinct from is_active (which means the store exists in the org)
+    # Whether this is the first (main) store created on registration
+    is_main_store = models.BooleanField(
+        default=False,
+        help_text="True for the primary store created during registration.",
+    )
+
     STATUS_OPEN   = "open"
     STATUS_CLOSED = "closed"
     STATUS_PAUSED = "paused"
     STATUS_CHOICES = [
-        (STATUS_OPEN,   "Open"),    # currently trading
-        (STATUS_CLOSED, "Closed"),  # after hours / temporarily closed
-        (STATUS_PAUSED, "Paused"),  # deliberately paused (no POS activity)
+        (STATUS_OPEN,   "Open"),
+        (STATUS_CLOSED, "Closed"),
+        (STATUS_PAUSED, "Paused"),
     ]
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
         default=STATUS_OPEN,
-        help_text="Operational status shown in the stores UI.",
     )
 
-    # Whether the store is currently active/open
     is_active = models.BooleanField(
         default=True,
         help_text="Active stores appear in the store switcher.",
@@ -223,70 +254,98 @@ class Store(BaseModel):
 
     @property
     def display_name(self):
-        """Full display name as shown in UI, e.g. 'Duka Kuu — Kariakoo'."""
         return f"{self.organisation.name} — {self.name}"
 
     class Meta:
         verbose_name = "Store"
         verbose_name_plural = "Stores"
         ordering = ["organisation__name", "name"]
-        # Store names must be unique within an organisation
         unique_together = [("organisation", "name")]
 
 
 # ── User (custom auth model) ──────────────────────────────────────────────────
 
+phone_validator = RegexValidator(
+    regex=r"^\d{10}$",
+    message="Enter a valid 10-digit phone number (e.g. 0712345678).",
+)
+
+
 class User(AbstractUser, BaseModel):
     """
-    Custom User model — extends Django's AbstractUser.
+    Custom User model for Ziada POS.
 
-    WHY custom? AbstractUser gives us username/password/email for free.
-    We add: role, store assignment, phone, and avatar colour.
+    Login: phone number + password (not username).
+    Username is auto-set to the phone number on save to satisfy AbstractUser.
+
+    Role hierarchy:
+      admin  → Cameltech platform admin. Full access everywhere.
+      owner  → Registered business owner. Manages their own organisation + stores.
+      staff  → Store employee. Scoped to one store, with owner-configured permissions.
 
     In the UI (sidenav footer):
-      - "Hamisi Mwakapaga" → full_name via first_name + last_name
-      - "Owner · admin"    → role field
-      - Avatar "HM"        → initials from name
-
-    IMPORTANT: AUTH_USER_MODEL = 'accounts.User' in settings.py
+      "Hamisi Mwakapaga · Owner"   → full_name + role
+      Avatar "HM"                  → initials from name
     """
 
-    # Role determines API permissions (see apps/core/permissions.py)
-    ROLE_ADMIN = "admin"
-    ROLE_MANAGER = "manager"
-    ROLE_CASHIER = "cashier"
+    # ── Roles ──────────────────────────────────────────────────────────────────
+    ROLE_ADMIN = "admin"   # Cameltech system admin
+    ROLE_OWNER = "owner"   # Registered business owner
+    ROLE_STAFF = "staff"   # Store employee
+
     ROLE_CHOICES = [
-        (ROLE_ADMIN,   "Admin (Owner)"),   # Full access
-        (ROLE_MANAGER, "Manager"),          # Store-level management
-        (ROLE_CASHIER, "Cashier"),          # POS only
+        (ROLE_ADMIN, "Admin (Cameltech)"),
+        (ROLE_OWNER, "Owner"),
+        (ROLE_STAFF, "Staff"),
     ]
     role = models.CharField(
         max_length=20,
         choices=ROLE_CHOICES,
-        default=ROLE_CASHIER,
-        help_text="User role determines what actions they can perform.",
+        default=ROLE_STAFF,
+        help_text="User role determines API access level.",
     )
 
-    # Primary store assignment — users are scoped to one store
-    # (multi-store access managed via org-level admin role)
+    # ── Phone (login field) ────────────────────────────────────────────────────
+    # Phone is the primary login credential — must be unique and exactly 10 digits.
+    # Username is auto-synced to phone on save so Django's AbstractUser is satisfied.
+    phone = models.CharField(
+        max_length=10,
+        unique=True,
+        validators=[phone_validator],
+        help_text="10-digit Tanzanian phone number used to log in (e.g. 0712345678).",
+    )
+
+    # ── Email (optional) ───────────────────────────────────────────────────────
+    # Override AbstractUser's required email — email is optional for TZ market.
+    email = models.EmailField(
+        blank=True,
+        unique=True,
+        null=True,
+        default=None,
+        help_text="Optional email address. Must be unique if provided.",
+    )
+
+    # ── Organisation link (owners span all stores; staff is scoped via store FK) ─
+    organisation = models.ForeignKey(
+        Organisation,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="members",
+        help_text="Direct organisation link set for owner-role users.",
+    )
+
+    # ── Store assignment (staff are scoped to one store) ───────────────────────
     store = models.ForeignKey(
         Store,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
         related_name="staff",
-        help_text="Primary store this user works at.",
+        help_text="Primary store this user works at. Required for staff, optional for owners.",
     )
 
-    # Phone number for WhatsApp / SMS contact
-    phone = models.CharField(
-        max_length=30,
-        blank=True,
-        help_text="User phone number (+255 7XX XXX XXX).",
-    )
-
-    # Hue value (0–360) for procedural avatar colour generation
-    # (same pattern as credit customers in the UI)
+    # ── Avatar colour ──────────────────────────────────────────────────────────
     avatar_hue = models.PositiveSmallIntegerField(
         default=260,
         help_text="Hue (0–360) for avatar background gradient.",
@@ -307,10 +366,9 @@ class User(AbstractUser, BaseModel):
         max_length=20,
         choices=SHIFT_CHOICES,
         default=SHIFT_MORNING,
-        help_text="Assigned shift for this staff member.",
     )
 
-    # ── Employment status (3-state, distinct from is_active login flag) ────────
+    # ── Employment status ──────────────────────────────────────────────────────
     EMPLOYMENT_ACTIVE   = "active"
     EMPLOYMENT_ON_LEAVE = "on_leave"
     EMPLOYMENT_INACTIVE = "inactive"
@@ -323,61 +381,86 @@ class User(AbstractUser, BaseModel):
         max_length=20,
         choices=EMPLOYMENT_STATUS_CHOICES,
         default=EMPLOYMENT_ACTIVE,
-        help_text="Employment status shown on the Staff page. "
-                  "Distinct from is_active which controls login access.",
     )
 
-    # ── POS access PIN ─────────────────────────────────────────────────────────
+    # ── POS PIN ────────────────────────────────────────────────────────────────
     pin = models.CharField(
         max_length=4,
         blank=True,
-        help_text="4-digit POS access PIN (stored as plain text — not a security credential).",
+        help_text="4-digit POS access PIN.",
     )
 
-    # ── Per-staff permissions (override role defaults) ─────────────────────────
-    can_refund = models.BooleanField(
+    # ── Per-staff permissions (owner can toggle these for each staff member) ───
+    can_refund       = models.BooleanField(default=False)
+    can_discount     = models.BooleanField(default=True)
+    can_view_reports = models.BooleanField(default=False)
+
+    # ── Verification flags ─────────────────────────────────────────────────────
+    # Set to True after the owner verifies via OTP (implemented later).
+    # Profile page shows reminder banners when these are False.
+    is_phone_verified = models.BooleanField(
         default=False,
-        help_text="Allow this staff member to issue refunds at the POS.",
+        help_text="True after the owner confirms their phone number via OTP.",
     )
-    can_discount = models.BooleanField(
-        default=True,
-        help_text="Allow this staff member to apply discounts at the POS.",
-    )
-    can_view_reports = models.BooleanField(
+    is_email_verified = models.BooleanField(
         default=False,
-        help_text="Allow this staff member to access Analytics and Reports.",
+        help_text="True after the owner confirms their email address.",
     )
 
-    # Override AbstractUser's UUID field conflict:
-    # AbstractUser uses id (int) by default — our BaseModel adds UUID id.
-    # We resolve this by NOT using BaseModel's id directly;
-    # instead we let AbstractUser handle the PK and just add our timestamps.
-
-    # Remove the `id` UUID from BaseModel — AbstractUser handles PK
-    # We still want created_at / updated_at but NOT a second `id` field.
-    # Solution: override the `id` field to be an AutoField (Django default)
-    # so AbstractUser's id wins and we keep the timestamps.
-    id = models.AutoField(primary_key=True)  # Override BaseModel's UUID id
-
-    # Keep BaseModel timestamps
+    # ── Override AbstractUser PK conflict with BaseModel ──────────────────────
+    id         = models.AutoField(primary_key=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ── REQUIRED_FIELDS: phone replaces email for createsuperuser ─────────────
+    REQUIRED_FIELDS = ["first_name", "last_name"]
+
+    def save(self, *args, **kwargs):
+        # Keep username in sync with phone so Django's auth backend works normally.
+        if self.phone:
+            self.username = self.phone
+        # Coerce empty-string email to None so unique=True allows multiple null emails.
+        # AbstractUser normalises email=None → "" which violates the unique constraint.
+        if not self.email:
+            self.email = None
+        # Random avatar hue if not set
+        if not self.avatar_hue or self.avatar_hue == 260:
+            self.avatar_hue = random.randint(0, 359)
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return self.get_full_name() or self.username
+        return self.get_full_name() or self.phone
 
     @property
     def full_name(self):
-        """Full name: 'Hamisi Mwakapaga'."""
-        return self.get_full_name() or self.username
+        return self.get_full_name() or self.phone
 
     @property
     def initials(self):
-        """Two-letter initials from full name, e.g. 'HM'."""
         parts = self.get_full_name().split()
         if len(parts) >= 2:
             return (parts[0][0] + parts[-1][0]).upper()
-        return self.username[:2].upper()
+        return (self.phone[:2]).upper()
+
+    @property
+    def get_organisation(self):
+        """
+        Returns the organisation this user belongs to.
+        Owners have a direct FK; staff derive it from their store.
+        """
+        if self.organisation_id:
+            return self.organisation
+        if self.store_id:
+            return self.store.organisation
+        return None
+
+    @property
+    def is_owner(self):
+        return self.role in (self.ROLE_OWNER, self.ROLE_ADMIN)
+
+    @property
+    def is_system_admin(self):
+        return self.role == self.ROLE_ADMIN
 
     class Meta:
         verbose_name = "User"
@@ -393,60 +476,35 @@ class AICredit(BaseModel):
 
     In the UI (sidenav footer):
       "AI CREDITS · MAY   2,418 / 5,000"
-
-    A new record is created each month. Usage is incremented with each
-    AI API call in apps/ai/services.py.
     """
 
-    # Which organisation this usage belongs to
     organisation = models.ForeignKey(
         Organisation,
         on_delete=models.CASCADE,
         related_name="ai_credits",
-        help_text="Organisation consuming the AI credits.",
     )
 
-    # Year and month of this usage period (e.g. 2026, 5 for May 2026)
-    year = models.PositiveSmallIntegerField(
-        help_text="Year of this usage period.",
-    )
-    month = models.PositiveSmallIntegerField(
-        help_text="Month (1–12) of this usage period.",
-    )
+    year  = models.PositiveSmallIntegerField()
+    month = models.PositiveSmallIntegerField()
 
-    # Credits consumed this month (starts at 0, incremented by AI service)
-    used = models.PositiveIntegerField(
-        default=0,
-        help_text="AI credits consumed this month.",
-    )
-
-    # Credits allocated for this month (copied from org at period start)
-    allocated = models.PositiveIntegerField(
-        default=5000,
-        help_text="Total AI credits available this month.",
-    )
+    used      = models.PositiveIntegerField(default=0)
+    allocated = models.PositiveIntegerField(default=5000)
 
     def __str__(self):
         return f"{self.organisation.name} — {self.year}/{self.month:02d} ({self.used}/{self.allocated})"
 
     @property
     def remaining(self):
-        """How many credits are left this month."""
         return max(0, self.allocated - self.used)
 
     @property
     def percentage_used(self):
-        """Percentage consumed (0–100)."""
         if self.allocated == 0:
             return 100
         return round(self.used / self.allocated * 100, 1)
 
     @classmethod
     def get_or_create_current(cls, organisation):
-        """
-        Get (or create) the AI credit record for the current month.
-        Called by apps/ai/services.py before each AI request.
-        """
         now = timezone.now()
         obj, _ = cls.objects.get_or_create(
             organisation=organisation,
@@ -460,5 +518,4 @@ class AICredit(BaseModel):
         verbose_name = "AI Credit"
         verbose_name_plural = "AI Credits"
         ordering = ["-year", "-month"]
-        # One record per organisation per month
         unique_together = [("organisation", "year", "month")]

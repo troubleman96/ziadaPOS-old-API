@@ -88,6 +88,8 @@ LOCAL_APPS = [
     "apps.notebook.apps.NotebookConfig",
     # Staff management: shifts, permissions, performance stats
     "apps.staff.apps.StaffConfig",
+    # Subscription plans and billing management
+    "apps.subscriptions.apps.SubscriptionsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

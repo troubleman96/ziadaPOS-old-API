@@ -21,7 +21,8 @@ def make_base_fixtures():
     store = Store.objects.create(organisation=org, name="Main", area="Kariakoo")
     cat   = Category.objects.create(name="Grocery")
     user  = User.objects.create_user(
-        username="cashier1", password="pass123!", role="cashier", store=store
+        username="0712000001", phone="0712000001", password="pass123!",
+        role="staff", store=store,
     )
     return org, store, cat, user
 
@@ -41,9 +42,9 @@ class CompleteSaleTests(TestCase):
         _, self.store, self.cat, self.user = make_base_fixtures()
         self.product = make_product(self.store, self.cat)
         # Authenticate as cashier
-        resp = self.client.post(reverse("token_obtain_pair"),
-                                {"username": "cashier1", "password": "pass123!"})
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+        resp = self.client.post(reverse("login"),
+                                {"phone": "0712000001", "password": "pass123!"})
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
 
     def test_complete_cash_sale(self):
         """POST /complete-sale/ with Cash creates a paid transaction."""
@@ -159,9 +160,9 @@ class TransactionListTests(TestCase):
             unit_cost=p.cost,
             qty=1,
         )
-        resp = self.client.post(reverse("token_obtain_pair"),
-                                {"username": "cashier1", "password": "pass123!"})
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+        resp = self.client.post(reverse("login"),
+                                {"phone": "0712000001", "password": "pass123!"})
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
 
     def test_list_transactions(self):
         """GET /transactions/ returns paginated list."""

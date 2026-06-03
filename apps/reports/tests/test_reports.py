@@ -37,13 +37,15 @@ def make_base():
     """Create org, store, manager, and cashier."""
     org     = Organisation.objects.create(name="Test Org")
     store   = Store.objects.create(organisation=org, name="Duka Kuu", area="Kariakoo")
-    manager = User.objects.create_user(
-        username="manager1", password="pass123!", role="manager", store=store
+    owner = User.objects.create_user(
+        username="0712000001", phone="0712000001", password="pass123!",
+        role="owner", store=store,
     )
-    cashier = User.objects.create_user(
-        username="cashier1", password="pass123!", role="cashier", store=store
+    staff = User.objects.create_user(
+        username="0712000002", phone="0712000002", password="pass123!",
+        role="staff", store=store,
     )
-    return org, store, manager, cashier
+    return org, store, owner, staff
 
 
 def make_transaction(store, cashier, total=50000, method="Cash", days_ago=0):
@@ -64,10 +66,10 @@ def make_transaction(store, cashier, total=50000, method="Cash", days_ago=0):
     return txn
 
 
-def auth(client, username, password="pass123!"):
-    """Authenticate an APIClient and return it."""
-    resp = client.post(reverse("token_obtain_pair"), {"username": username, "password": password})
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+def auth(client, phone, password="pass123!"):
+    """Authenticate an APIClient via phone + password."""
+    resp = client.post(reverse("login"), {"phone": phone, "password": password})
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
     return client
 
 
@@ -346,7 +348,7 @@ class GenerateReportAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, self.cashier = make_base()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
 
         cat = Category.objects.create(name="Grocery")
         Product.objects.create(
@@ -428,7 +430,7 @@ class ScheduledReportAPITests(TestCase):
 
     def test_manager_can_create_scheduled_report(self):
         """Store manager can POST to /reports/scheduled/."""
-        auth(self.client, "manager1")
+        auth(self.client, "0712000001")
         resp = self.client.post(
             reverse("reports-scheduled"),
             {
@@ -445,7 +447,7 @@ class ScheduledReportAPITests(TestCase):
 
     def test_cashier_cannot_create_scheduled_report(self):
         """Cashier does not have permission to create scheduled reports."""
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
         resp = self.client.post(
             reverse("reports-scheduled"),
             {
@@ -459,7 +461,7 @@ class ScheduledReportAPITests(TestCase):
 
     def test_list_scheduled_reports(self):
         """GET /reports/scheduled/ returns the list."""
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
         ScheduledReport.objects.create(
             store=self.store, organisation=self.store.organisation,
             report_type="sales", name="Test", frequency="daily",
@@ -471,7 +473,7 @@ class ScheduledReportAPITests(TestCase):
 
     def test_toggle_enabled(self):
         """PATCH /reports/scheduled/{id}/ can toggle is_enabled."""
-        auth(self.client, "manager1")
+        auth(self.client, "0712000001")
         s = ScheduledReport.objects.create(
             store=self.store, organisation=self.store.organisation,
             report_type="sales", name="Test", frequency="daily",
@@ -489,7 +491,7 @@ class ScheduledReportAPITests(TestCase):
 
     def test_delete_scheduled_report(self):
         """DELETE /reports/scheduled/{id}/ removes the record."""
-        auth(self.client, "manager1")
+        auth(self.client, "0712000001")
         s = ScheduledReport.objects.create(
             store=self.store, organisation=self.store.organisation,
             report_type="sales", name="Test", frequency="daily",
@@ -510,7 +512,7 @@ class ExportHistoryTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, self.cashier = make_base()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
 
         # Seed some export records
         for i in range(3):

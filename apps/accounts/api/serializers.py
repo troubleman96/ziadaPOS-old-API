@@ -1,19 +1,32 @@
 """
 apps/accounts/api/serializers.py
 
-Serializers for user accounts, organisations, and stores.
+Serializers for user accounts, organisations, stores, and registration.
 
-Each serializer converts a Django model instance to/from JSON.
-We follow a consistent pattern:
-  - *Serializer      → full read/write (create + update)
-  - *ReadSerializer  → read-only, often includes computed fields
-  - *WriteSerializer → write-only, for create/update with validated input
+Key serializers:
+  RegistrationSerializer  → atomic account creation (org + store + owner + trial)
+  PhoneLoginSerializer    → phone + password → JWT tokens + user data
+  UserSerializer          → full read serializer (returned on login, profile, etc.)
+  UserCreateSerializer    → owner creates a staff member
+  UserUpdateSerializer    → profile/staff updates
 """
 
+import random
+from datetime import date, timedelta
+
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
 from rest_framework import serializers
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from apps.accounts.tanzania import (
+    BUSINESS_TYPE_CHOICES,
+    REGION_CHOICES,
+    TANZANIA_REGIONS,
+    seed_categories_for_store,
+)
 
 from ..models import AICredit, Organisation, Store, User
 
@@ -21,89 +34,65 @@ from ..models import AICredit, Organisation, Store, User
 # ── Organisation ──────────────────────────────────────────────────────────────
 
 class OrganisationSerializer(serializers.ModelSerializer):
-    """
-    Full serialiser for Organisation.
-    Used when returning org details to the frontend.
-    """
 
-    # Include store count as a computed field
     store_count = serializers.SerializerMethodField()
 
     class Meta:
-        model = Organisation
+        model  = Organisation
         fields = [
             "id", "name", "legal_name", "tin",
-            "country", "currency", "plan",
+            "business_type", "region",
+            "country", "currency", "plan", "max_stores",
             "ai_credits_monthly", "trial_ends_at",
             "store_count", "created_at", "updated_at",
         ]
-        # Never expose the UUID id in writable form — it's auto-generated
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at", "max_stores"]
 
     def get_store_count(self, obj):
-        """Number of active stores in this organisation."""
         return obj.stores.filter(is_active=True).count()
 
 
 # ── Store ─────────────────────────────────────────────────────────────────────
 
 class StoreSerializer(serializers.ModelSerializer):
-    """
-    Full serialiser for Store.
-    Used in the store switcher and store management pages.
-    """
 
-    # Include the organisation name for display
-    organisation_name = serializers.CharField(
-        source="organisation.name",
-        read_only=True,
-    )
-
-    # Include staff count
-    staff_count = serializers.SerializerMethodField()
+    organisation_name = serializers.CharField(source="organisation.name", read_only=True)
+    staff_count       = serializers.SerializerMethodField()
 
     class Meta:
-        model = Store
+        model  = Store
         fields = [
             "id", "organisation", "organisation_name",
             "name", "code", "address", "area", "phone",
-            "till_count", "is_active",
+            "till_count", "is_active", "is_main_store",
             "staff_count", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def get_staff_count(self, obj):
-        """Number of active staff members at this store."""
         return obj.staff.filter(is_active=True).count()
 
 
 class StoreMinimalSerializer(serializers.ModelSerializer):
-    """
-    Minimal store representation — used when embedding store in other serialisers.
-    Keeps responses lean (e.g. in User serialiser).
-    """
-
     class Meta:
-        model = Store
+        model  = Store
         fields = ["id", "name", "area"]
 
 
 # ── User ──────────────────────────────────────────────────────────────────────
 
 class UserSerializer(serializers.ModelSerializer):
-    """
-    Read serialiser for User — returned when getting user details.
-    Includes computed initials, full_name, and performance stats.
-    Stats are computed per-object; for list views use the annotated queryset
-    via UserViewSet which annotates sales_today / txns_today efficiently.
-    """
+    """Read serializer — returned on login, /me, user detail, and staff list."""
 
-    full_name  = serializers.CharField(read_only=True)
-    initials   = serializers.CharField(read_only=True)
+    full_name    = serializers.CharField(read_only=True)
+    initials     = serializers.CharField(read_only=True)
     store_detail = StoreMinimalSerializer(source="store", read_only=True)
 
-    # Performance stats — populated from queryset annotations when available,
-    # or computed on demand for detail views.
+    # Verification status
+    is_phone_verified = serializers.BooleanField(read_only=True)
+    is_email_verified = serializers.BooleanField(read_only=True)
+
+    # Performance stats
     sales_today  = serializers.SerializerMethodField()
     total_sales  = serializers.SerializerMethodField()
     avg_ticket   = serializers.SerializerMethodField()
@@ -111,48 +100,43 @@ class UserSerializer(serializers.ModelSerializer):
     txns_total   = serializers.SerializerMethodField()
 
     class Meta:
-        model = User
+        model  = User
         fields = [
-            "id", "username", "email",
+            "id", "phone", "email",
             "first_name", "last_name", "full_name", "initials",
-            "phone", "role", "avatar_hue",
-            # Staff schedule & status
+            "role", "avatar_hue",
+            "is_phone_verified", "is_email_verified",
             "shift", "employment_status", "pin",
-            # Per-staff permissions
             "can_refund", "can_discount", "can_view_reports",
             "store", "store_detail",
+            "organisation",
             "is_active", "date_joined", "last_login",
             "created_at", "updated_at",
-            # Performance stats (computed)
             "sales_today", "total_sales", "avg_ticket",
             "txns_today", "txns_total",
         ]
         read_only_fields = [
             "id", "full_name", "initials", "date_joined",
             "last_login", "created_at", "updated_at",
+            "is_phone_verified", "is_email_verified",
             "sales_today", "total_sales", "avg_ticket",
             "txns_today", "txns_total",
         ]
 
     def _txn_qs(self, obj):
-        """Return the Transaction queryset for this user, or None if unavailable."""
         try:
             return obj.transactions.all()
         except Exception:
             return None
 
     def get_sales_today(self, obj):
-        # Use queryset annotation if available (list view), else compute inline
         if hasattr(obj, "_sales_today"):
             return obj._sales_today or 0
         qs = self._txn_qs(obj)
         if qs is None:
             return 0
         today = timezone.now().date()
-        result = qs.filter(created_at__date=today, status="paid").aggregate(
-            t=Sum("total")
-        )
-        return result["t"] or 0
+        return qs.filter(created_at__date=today, status="paid").aggregate(t=Sum("total"))["t"] or 0
 
     def get_total_sales(self, obj):
         if hasattr(obj, "_total_sales"):
@@ -160,8 +144,7 @@ class UserSerializer(serializers.ModelSerializer):
         qs = self._txn_qs(obj)
         if qs is None:
             return 0
-        result = qs.filter(status="paid").aggregate(t=Sum("total"))
-        return result["t"] or 0
+        return qs.filter(status="paid").aggregate(t=Sum("total"))["t"] or 0
 
     def get_avg_ticket(self, obj):
         if hasattr(obj, "_avg_ticket"):
@@ -169,8 +152,7 @@ class UserSerializer(serializers.ModelSerializer):
         qs = self._txn_qs(obj)
         if qs is None:
             return 0
-        result = qs.filter(status="paid").aggregate(a=Avg("total"))
-        return round(result["a"] or 0)
+        return round(qs.filter(status="paid").aggregate(a=Avg("total"))["a"] or 0)
 
     def get_txns_today(self, obj):
         if hasattr(obj, "_txns_today"):
@@ -190,50 +172,230 @@ class UserSerializer(serializers.ModelSerializer):
         return qs.count()
 
 
+# ── Registration ──────────────────────────────────────────────────────────────
+
+class RegistrationSerializer(serializers.Serializer):
+    """
+    Owner self-registration.
+
+    Atomically creates:
+      1. Organisation  (name = main_shop_name, business_type, region)
+      2. Store         (main store, is_main_store=True)
+      3. User          (role=owner, phone, name, password)
+      4. Subscription  (trial: 10,000 TZS, 7 days, status=pending_payment)
+
+    Then seeds pre-configured categories for the business type.
+
+    Returns: { user, organisation, subscription, access, refresh }
+    """
+
+    # ── Owner personal details ─────────────────────────────────────────────────
+    full_name        = serializers.CharField(max_length=200)
+    phone            = serializers.RegexField(
+        r"^\d{10}$",
+        error_messages={"invalid": "Phone must be exactly 10 digits (e.g. 0712345678)."},
+    )
+    password         = serializers.CharField(write_only=True, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True)
+    email            = serializers.EmailField(required=False, allow_blank=True, default=None)
+
+    # ── Business details ────────────────────────────────────────────────────────
+    main_shop_name = serializers.CharField(
+        max_length=200,
+        help_text="Name of the main shop (becomes the Organisation name and first Store name).",
+    )
+    business_type  = serializers.ChoiceField(
+        choices=[c[0] for c in BUSINESS_TYPE_CHOICES],
+    )
+    region         = serializers.ChoiceField(choices=TANZANIA_REGIONS)
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("This phone number is already registered.")
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("This email address is already registered.")
+        return value or None
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs.pop("confirm_password"):
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        from apps.subscriptions.models import Subscription
+
+        phone          = validated_data["phone"]
+        full_name      = validated_data["full_name"]
+        main_shop_name = validated_data["main_shop_name"]
+        business_type  = validated_data["business_type"]
+        region         = validated_data["region"]
+        email          = validated_data.get("email")
+
+        # Split full_name into first + last
+        name_parts = full_name.strip().split(None, 1)
+        first_name = name_parts[0]
+        last_name  = name_parts[1] if len(name_parts) > 1 else ""
+
+        # 1. Create Organisation
+        org = Organisation.objects.create(
+            name          = main_shop_name,
+            business_type = business_type,
+            region        = region,
+            max_stores    = 3,
+        )
+
+        # 2. Create main Store
+        store = Store.objects.create(
+            organisation  = org,
+            name          = main_shop_name,
+            is_main_store = True,
+            color         = f"#{random.randint(0, 0xFFFFFF):06x}",
+        )
+
+        # 3. Create owner User
+        user = User.objects.create_user(
+            username   = phone,        # username = phone (kept in sync by model.save)
+            phone      = phone,
+            email      = email,
+            first_name = first_name,
+            last_name  = last_name,
+            password   = validated_data["password"],
+            role       = User.ROLE_OWNER,
+            organisation = org,
+            store        = store,
+            avatar_hue   = random.randint(0, 359),
+            can_refund       = True,
+            can_discount     = True,
+            can_view_reports = True,
+        )
+
+        # 4. Create trial Subscription (pending payment confirmation)
+        now   = timezone.now()
+        today = now.date()
+        trial = Subscription.objects.create(
+            organisation    = org,
+            status          = Subscription.STATUS_PENDING,
+            start_date      = today,
+            end_date        = today + timedelta(days=7),
+            is_trial        = True,
+            trial_fee       = 10000,
+            extra_stores    = 0,
+        )
+
+        # 5. Set trial_ends_at on org for fast subscription checks
+        org.trial_ends_at = now + timedelta(days=7)
+        org.save(update_fields=["trial_ends_at", "updated_at"])
+
+        # 6. Seed pre-configured categories for this business type
+        seed_categories_for_store(store, business_type)
+
+        # 7. Generate JWT tokens so user is auto-logged in after registration
+        refresh = RefreshToken.for_user(user)
+
+        return {
+            "user":         user,
+            "organisation": org,
+            "store":        store,
+            "subscription": trial,
+            "access":       str(refresh.access_token),
+            "refresh":      str(refresh),
+        }
+
+
+# ── Phone Login ───────────────────────────────────────────────────────────────
+
+class PhoneLoginSerializer(serializers.Serializer):
+    """
+    Authenticate with phone number + password.
+    Returns JWT tokens + full user profile + subscription status.
+
+    POST /api/v1/auth/login/
+      { "phone": "0712345678", "password": "..." }
+    """
+
+    phone    = serializers.RegexField(
+        r"^\d{10}$",
+        error_messages={"invalid": "Enter a valid 10-digit phone number."},
+    )
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        phone    = attrs["phone"]
+        password = attrs["password"]
+
+        try:
+            user = User.objects.select_related("store", "store__organisation", "organisation").get(phone=phone)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"phone": "Invalid phone number or password."})
+
+        if not user.check_password(password):
+            raise serializers.ValidationError({"password": "Invalid phone number or password."})
+
+        if not user.is_active:
+            raise serializers.ValidationError({"phone": "This account has been deactivated."})
+
+        attrs["user"] = user
+        return attrs
+
+
+# ── Staff management ──────────────────────────────────────────────────────────
+
 class UserCreateSerializer(serializers.ModelSerializer):
     """
-    Write serialiser for creating a new staff member.
-    Validates password strength and hashes it before saving.
-    Permissions default by role if not supplied.
+    Owner creates a new staff member for their store.
+    Staff get role=staff and are linked to the owner's store.
     """
 
     password         = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True, required=True)
 
     class Meta:
-        model = User
+        model  = User
         fields = [
-            "username", "email", "password", "password_confirm",
-            "first_name", "last_name", "phone", "role", "store",
+            "phone", "email", "password", "password_confirm",
+            "first_name", "last_name", "role", "store",
             "avatar_hue", "shift", "employment_status", "pin",
             "can_refund", "can_discount", "can_view_reports",
         ]
 
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("This phone number is already registered.")
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("This email is already registered.")
+        return value or None
+
     def validate(self, attrs):
         if attrs["password"] != attrs.pop("password_confirm"):
             raise serializers.ValidationError({"password_confirm": "Passwords do not match."})
+        # Staff can only be assigned role=staff; owners use registration flow
+        if attrs.get("role") not in (User.ROLE_STAFF, User.ROLE_OWNER):
+            attrs["role"] = User.ROLE_STAFF
         return attrs
 
     def create(self, validated_data):
-        # Default permissions by role if not explicitly provided
-        role = validated_data.get("role", User.ROLE_CASHIER)
+        role = validated_data.get("role", User.ROLE_STAFF)
         if "can_refund" not in validated_data:
-            validated_data["can_refund"] = role in (User.ROLE_ADMIN, User.ROLE_MANAGER)
-        if "can_discount" not in validated_data:
-            validated_data["can_discount"] = True
+            validated_data["can_refund"] = role == User.ROLE_OWNER
         if "can_view_reports" not in validated_data:
-            validated_data["can_view_reports"] = role in (User.ROLE_ADMIN, User.ROLE_MANAGER)
+            validated_data["can_view_reports"] = role == User.ROLE_OWNER
+        phone = validated_data["phone"]
+        validated_data.setdefault("username", phone)
         return User.objects.create_user(**validated_data)
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
-    """
-    Write serialiser for updating a staff member's profile (excluding password).
-    Includes all staff-management fields the UI can modify.
-    """
+    """Update staff profile or permissions. No password change here."""
 
     class Meta:
-        model = User
+        model  = User
         fields = [
             "email", "first_name", "last_name",
             "phone", "role", "store", "avatar_hue",
@@ -244,11 +406,6 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
 
 class StaffStatsSerializer(serializers.Serializer):
-    """
-    Response body for GET /api/v1/accounts/users/{id}/stats/
-    Performance metrics for a single staff member.
-    """
-
     user_id      = serializers.IntegerField()
     full_name    = serializers.CharField()
     sales_today  = serializers.IntegerField()
@@ -259,17 +416,8 @@ class StaffStatsSerializer(serializers.Serializer):
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    """
-    Serialiser for the change-password endpoint.
-    Requires the user to supply their current password before changing.
-    """
-
-    old_password = serializers.CharField(write_only=True, required=True)
-    new_password = serializers.CharField(
-        write_only=True,
-        required=True,
-        validators=[validate_password],
-    )
+    old_password         = serializers.CharField(write_only=True, required=True)
+    new_password         = serializers.CharField(write_only=True, required=True, validators=[validate_password])
     new_password_confirm = serializers.CharField(write_only=True, required=True)
 
     def validate(self, attrs):
@@ -283,16 +431,11 @@ class ChangePasswordSerializer(serializers.Serializer):
 # ── AI Credits ────────────────────────────────────────────────────────────────
 
 class AICreditSerializer(serializers.ModelSerializer):
-    """
-    Serialiser for AI credit usage — shown in sidenav footer.
-    """
-
-    # Computed from model properties
-    remaining = serializers.IntegerField(read_only=True)
-    percentage_used = serializers.FloatField(read_only=True)
+    remaining        = serializers.IntegerField(read_only=True)
+    percentage_used  = serializers.FloatField(read_only=True)
 
     class Meta:
-        model = AICredit
+        model  = AICredit
         fields = [
             "id", "year", "month",
             "used", "allocated", "remaining", "percentage_used",

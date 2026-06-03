@@ -19,6 +19,7 @@ URL structure:
   /api/v1/stores/              → Store management, KPIs, staff rosters
   /api/v1/notebook/            → Internal notebook — notes, tags, store-scoped
   /api/v1/staff/               → Staff management — profiles, shifts, permissions, stats
+  /api/v1/subscriptions/       → Subscription plans (public), owner status, admin panel
 """
 
 from django.contrib import admin
@@ -74,5 +75,8 @@ urlpatterns = [
 
         # Staff — management, shifts, permissions, performance stats
         path("staff/", include("apps.staff.api.urls")),
+
+        # Subscriptions — plans (public), owner subscription status, admin activation
+        path("subscriptions/", include("apps.subscriptions.api.urls")),
     ])),
 ]

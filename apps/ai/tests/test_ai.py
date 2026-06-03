@@ -20,19 +20,20 @@ from apps.ai.models import Conversation, Message
 
 
 def make_base_fixtures():
-    """Create org, store, and cashier user."""
-    org     = Organisation.objects.create(name="Test Org")
-    store   = Store.objects.create(organisation=org, name="Main Store", area="Kariakoo")
-    cashier = User.objects.create_user(
-        username="cashier1", password="pass123!", role="cashier", store=store
+    """Create org, store, and staff user."""
+    org   = Organisation.objects.create(name="Test Org")
+    store = Store.objects.create(organisation=org, name="Main Store", area="Kariakoo")
+    user  = User.objects.create_user(
+        username="0712000001", phone="0712000001", password="pass123!",
+        role="staff", store=store,
     )
-    return org, store, cashier
+    return org, store, user
 
 
-def auth(client, username, password="pass123!"):
-    """Authenticate an APIClient."""
-    resp = client.post(reverse("token_obtain_pair"), {"username": username, "password": password})
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+def auth(client, phone, password="pass123!"):
+    """Authenticate an APIClient via phone + password."""
+    resp = client.post(reverse("login"), {"phone": phone, "password": password})
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
     return client
 
 
@@ -105,12 +106,12 @@ class StartChatTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.org, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Ensure the organisation has AI credits
         AICredit.objects.create(
             organisation=self.org,
-            year=2026, month=5,
+            year=2026, month=6,
             used=0, allocated=100,
         )
 
@@ -176,10 +177,10 @@ class ContinueChatTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.org, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         AICredit.objects.create(
-            organisation=self.org, year=2026, month=5, used=0, allocated=100
+            organisation=self.org, year=2026, month=6, used=0, allocated=100
         )
         # Create a conversation
         self.conv = Conversation.objects.create(
@@ -219,7 +220,7 @@ class ConversationListTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.org, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Create some conversations
         Conversation.objects.create(
@@ -242,7 +243,8 @@ class ConversationListTests(TestCase):
         other_org   = Organisation.objects.create(name="Other Org")
         other_store = Store.objects.create(organisation=other_org, name="Other", area="Dar")
         other_user  = User.objects.create_user(
-            username="other", password="pass123!", role="cashier", store=other_store
+            username="0712000099", phone="0712000099", password="pass123!",
+            role="staff", store=other_store,
         )
         Conversation.objects.create(
             user=other_user, store=other_store, organisation=other_org,
@@ -259,9 +261,9 @@ class AISuggestionsTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.org, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
         AICredit.objects.create(
-            organisation=self.org, year=2026, month=5, used=10, allocated=100
+            organisation=self.org, year=2026, month=6, used=10, allocated=100
         )
 
     def test_suggestions_returned(self):
@@ -287,11 +289,11 @@ class ZeroCreditTest(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.org, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Exhaust all AI credits
         AICredit.objects.create(
-            organisation=self.org, year=2026, month=5,
+            organisation=self.org, year=2026, month=6,
             used=100, allocated=100,
         )
 

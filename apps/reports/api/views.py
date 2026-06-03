@@ -155,7 +155,7 @@ class GenerateReportView(APIView):
             return success_response(
                 data=None,
                 message="Report generation failed. Please try again.",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status=500,
             )
 
         # Build the filename-safe report name for history display
@@ -211,7 +211,7 @@ class GenerateReportView(APIView):
                     "report":        data,
                 },
                 message=f"{report_name} report data.",
-                http_status=status.HTTP_200_OK,
+                status=200,
             )
 
 
@@ -287,7 +287,7 @@ class ExportDownloadView(APIView):
             return success_response(
                 data=None,
                 message="Report re-generation failed.",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status=500,
             )
 
         if export.format == FORMAT_CSV:
@@ -333,8 +333,8 @@ class ScheduledReportListCreateView(APIView):
 
     def post(self, request):
         # Only managers/owners can schedule reports
-        if not (request.user.role in ("manager", "owner", "admin")):
-            raise PermissionDenied("Only store managers can schedule reports.")
+        if not (request.user.role in ("owner", "admin")):
+            raise PermissionDenied("Only store owners or admins can schedule reports.")
 
         store = request.user.store
         serializer = ScheduledReportSerializer(data=request.data)
@@ -355,7 +355,7 @@ class ScheduledReportListCreateView(APIView):
         return success_response(
             data=ScheduledReportSerializer(scheduled).data,
             message="Scheduled report created.",
-            http_status=status.HTTP_201_CREATED,
+            status=201,
         )
 
 
@@ -381,8 +381,8 @@ class ScheduledReportDetailView(APIView):
             raise NotFound("Scheduled report not found.")
 
     def _require_manager(self, user):
-        if user.role not in ("manager", "owner", "admin"):
-            raise PermissionDenied("Only store managers can modify scheduled reports.")
+        if user.role not in ("owner", "admin"):
+            raise PermissionDenied("Only store owners or admins can modify scheduled reports.")
 
     def patch(self, request, pk):
         self._require_manager(request.user)

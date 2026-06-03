@@ -1,10 +1,11 @@
 """
 apps/accounts/api/views.py
 
-API views for accounts: users, stores, organisations, AI credits.
+API views for accounts: registration, login, users, stores, organisations, AI credits.
 
-All views use our standard response envelope (apps.core.response).
-Authentication is JWT — provided via 'Authorization: Bearer <token>' header.
+Auth flow:
+  POST /api/v1/auth/register/ → create account (org + store + owner + trial sub)
+  POST /api/v1/auth/login/    → phone + password → JWT tokens + user profile
 """
 
 import logging
@@ -18,8 +19,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
+from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.core.permissions import IsOrganisationAdmin, IsStoreManager
+from apps.core.permissions import IsOwner, IsStoreStaff, IsSystemAdmin
 from apps.core.response import (
     created_response,
     error_response,
@@ -31,6 +33,8 @@ from .serializers import (
     AICreditSerializer,
     ChangePasswordSerializer,
     OrganisationSerializer,
+    PhoneLoginSerializer,
+    RegistrationSerializer,
     StaffStatsSerializer,
     StoreSerializer,
     UserCreateSerializer,
@@ -41,6 +45,123 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+# ── Registration ──────────────────────────────────────────────────────────────
+
+class RegisterView(APIView):
+    """
+    POST /api/v1/auth/register/
+
+    Self-registration for new business owners.
+
+    Required fields:
+      full_name, phone (10 digits), password, confirm_password,
+      main_shop_name, business_type, region
+
+    Optional fields:
+      email
+
+    Response includes JWT tokens so the user is auto-logged in.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RegistrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Registration failed. Please check the errors below.",
+                errors=serializer.errors,
+                status=400,
+            )
+
+        result = serializer.save()
+
+        logger.info(
+            "New owner registered: phone=%s org='%s'",
+            result["user"].phone,
+            result["organisation"].name,
+        )
+
+        return created_response(
+            data={
+                "user":         UserSerializer(result["user"]).data,
+                "organisation": OrganisationSerializer(result["organisation"]).data,
+                "subscription": {
+                    "id":          str(result["subscription"].id),
+                    "status":      result["subscription"].status,
+                    "is_trial":    True,
+                    "end_date":    str(result["subscription"].end_date),
+                    "trial_fee":   result["subscription"].trial_fee,
+                    "days_remaining": result["subscription"].days_remaining,
+                },
+                "access":       result["access"],
+                "refresh":      result["refresh"],
+            },
+            message=(
+                f"Welcome to Ziada! Your account has been created. "
+                f"Please pay 10,000 TZS to activate your 7-day trial."
+            ),
+        )
+
+
+# ── Login (phone + password) ──────────────────────────────────────────────────
+
+class PhoneLoginView(APIView):
+    """
+    POST /api/v1/auth/login/
+
+    Authenticates with phone number + password (replaces username-based login).
+
+    Response:
+      access, refresh     → JWT tokens
+      user                → full user profile
+      subscription        → current subscription status
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PhoneLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid credentials.",
+                errors=serializer.errors,
+                status=401,
+            )
+
+        user = serializer.validated_data["user"]
+
+        # Generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+
+        # Get subscription status
+        org = user.get_organisation
+        sub_data = None
+        if org:
+            sub = org.subscriptions.order_by("-created_at").first()
+            if sub:
+                sub_data = {
+                    "id":             str(sub.id),
+                    "status":         sub.status,
+                    "is_trial":       sub.is_trial,
+                    "is_active_now":  sub.is_active_now,
+                    "days_remaining": sub.days_remaining,
+                    "end_date":       str(sub.end_date),
+                }
+
+        logger.info("User login: phone=%s role=%s", user.phone, user.role)
+
+        return success_response(
+            data={
+                "access":       str(refresh.access_token),
+                "refresh":      str(refresh),
+                "user":         UserSerializer(user).data,
+                "subscription": sub_data,
+            },
+            message="Logged in successfully.",
+        )
+
+
 # ── Current User ("me") ───────────────────────────────────────────────────────
 
 class MeView(APIView):
@@ -48,36 +169,46 @@ class MeView(APIView):
     GET  /api/v1/accounts/me/  → return the currently logged-in user's profile
     PATCH /api/v1/accounts/me/ → update profile fields
 
-    Referenced by:
-      - Sidenav footer: displays name, role, avatar initials
-      - Dashboard greeting: "Good afternoon, Hamisi"
+    Response includes verification status so the frontend can show
+    reminder banners for unverified phone/email.
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Return the current user's full profile."""
-        serializer = UserSerializer(request.user)
+        org = request.user.get_organisation
+
+        # Include subscription status in the /me response
+        sub_data = None
+        if org:
+            sub = org.subscriptions.order_by("-created_at").first()
+            if sub:
+                sub_data = {
+                    "status":         sub.status,
+                    "is_trial":       sub.is_trial,
+                    "is_active_now":  sub.is_active_now,
+                    "days_remaining": sub.days_remaining,
+                    "end_date":       str(sub.end_date),
+                }
+
         return success_response(
-            data=serializer.data,
+            data={
+                "user":         UserSerializer(request.user).data,
+                "subscription": sub_data,
+                "verification": {
+                    "phone_verified": request.user.is_phone_verified,
+                    "email_verified": request.user.is_email_verified,
+                },
+            },
             message="User profile retrieved.",
         )
 
     def patch(self, request):
-        """Partially update the current user's profile (no password change here)."""
-        serializer = UserUpdateSerializer(
-            request.user,
-            data=request.data,
-            partial=True,
-        )
+        serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
         if not serializer.is_valid():
-            return error_response(
-                message="Validation failed.",
-                errors=serializer.errors,
-                status=400,
-            )
+            return error_response("Validation failed.", errors=serializer.errors, status=400)
         serializer.save()
-        logger.info("User %s updated their profile.", request.user.username)
+        logger.info("User %s updated their profile.", request.user.phone)
         return success_response(
             data=UserSerializer(request.user).data,
             message="Profile updated successfully.",
@@ -93,12 +224,10 @@ class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """Change the current user's password after verifying old one."""
         serializer = ChangePasswordSerializer(data=request.data)
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors)
 
-        # Verify old password is correct
         if not request.user.check_password(serializer.validated_data["old_password"]):
             return error_response(
                 "Current password is incorrect.",
@@ -106,31 +235,21 @@ class ChangePasswordView(APIView):
                 status=400,
             )
 
-        # Set the new password (hashes it internally)
         request.user.set_password(serializer.validated_data["new_password"])
         request.user.save()
-
-        logger.info("User %s changed their password.", request.user.username)
+        logger.info("User %s changed their password.", request.user.phone)
         return success_response(message="Password changed successfully.")
 
 
 # ── User management ───────────────────────────────────────────────────────────
 
 def _annotate_with_stats(queryset):
-    """
-    Annotate a User queryset with today's and all-time transaction stats.
-    Requires Transaction.cashier to be the reverse FK (related_name='transactions').
-    Wrapped in try/except so it degrades gracefully if the transactions app is unavailable.
-    """
     today = timezone.now().date()
     try:
         return queryset.annotate(
             _sales_today=Sum(
                 "transactions__total",
-                filter=Q(
-                    transactions__created_at__date=today,
-                    transactions__status="paid",
-                ),
+                filter=Q(transactions__created_at__date=today, transactions__status="paid"),
             ),
             _txns_today=Count(
                 "transactions",
@@ -152,25 +271,23 @@ def _annotate_with_stats(queryset):
 
 class UserViewSet(ModelViewSet):
     """
-    CRUD endpoints for staff / user management.
+    CRUD endpoints for user/staff management.
 
-    GET    /api/v1/accounts/users/              → list all users (manager+ sees own store)
-    POST   /api/v1/accounts/users/              → create a new staff member
-    GET    /api/v1/accounts/users/{id}/         → staff detail with performance stats
+    GET    /api/v1/accounts/users/              → list (owner sees own org; admin sees all)
+    POST   /api/v1/accounts/users/              → create staff member
+    GET    /api/v1/accounts/users/{id}/         → staff detail
     PATCH  /api/v1/accounts/users/{id}/         → update profile / shift / permissions
     DELETE /api/v1/accounts/users/{id}/         → deactivate (soft delete)
-    GET    /api/v1/accounts/users/{id}/stats/   → isolated performance stats for one user
-    GET    /api/v1/accounts/users/kpis/         → store-level staff KPIs (count, on-shift, etc.)
 
-    Query params for list:
+    Query params:
       ?store=<id>              → filter by store
-      ?role=admin|manager|cashier
+      ?role=owner|staff
       ?employment_status=active|on_leave|inactive
       ?search=<name_or_phone>
     """
 
-    queryset = User.objects.select_related("store", "store__organisation").all()
-    permission_classes = [IsAuthenticated, IsStoreManager]
+    queryset = User.objects.select_related("store", "store__organisation", "organisation").all()
+    permission_classes = [IsAuthenticated, IsOwner]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -181,18 +298,29 @@ class UserViewSet(ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        # Non-admins are scoped to their own store
-        if self.request.user.role not in (User.ROLE_ADMIN,):
-            if self.request.user.store_id:
-                qs = qs.filter(store=self.request.user.store)
+        user = self.request.user
+        if user.role == User.ROLE_ADMIN:
+            return qs   # system admin sees everyone
+        # Owners see only users in their organisation
+        org = user.get_organisation
+        if org:
+            qs = qs.filter(
+                Q(organisation=org) | Q(store__organisation=org)
+            )
         return qs
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors)
+
+        # Automatically assign to owner's organisation
         user = serializer.save()
-        logger.info("User %s created staff member %s.", request.user.username, user.username)
+        if not user.organisation_id and request.user.get_organisation:
+            user.organisation = request.user.get_organisation
+            user.save(update_fields=["organisation", "updated_at"])
+
+        logger.info("User %s created staff member %s.", request.user.phone, user.phone)
         return created_response(
             data=UserSerializer(user).data,
             message=f"Staff member '{user.full_name}' created.",
@@ -204,23 +332,17 @@ class UserViewSet(ModelViewSet):
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors)
         serializer.save()
-        return success_response(
-            data=UserSerializer(user).data,
-            message="Staff member updated.",
-        )
+        return success_response(data=UserSerializer(user).data, message="Staff member updated.")
 
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
         user.employment_status = User.EMPLOYMENT_INACTIVE
         user.is_active = False
         user.save(update_fields=["employment_status", "is_active", "updated_at"])
-        logger.info("User %s deactivated %s.", request.user.username, user.username)
+        logger.info("User %s deactivated %s.", request.user.phone, user.phone)
         return success_response(message=f"'{user.full_name}' deactivated.")
 
     def list(self, request, *args, **kwargs):
-        """
-        List staff members with optional filters and performance stats.
-        """
         queryset = self.filter_queryset(self.get_queryset())
 
         store_id = request.query_params.get("store")
@@ -255,103 +377,85 @@ class UserViewSet(ModelViewSet):
         return success_response(data=serializer.data)
 
     def retrieve(self, request, *args, **kwargs):
-        """Return a single staff member with fully-computed performance stats."""
         instance = self.get_object()
-        # Annotate the single object so stats are computed via DB aggregation
-        annotated = _annotate_with_stats(
-            User.objects.filter(pk=instance.pk)
-        ).first()
+        annotated = _annotate_with_stats(User.objects.filter(pk=instance.pk)).first()
         serializer = UserSerializer(annotated or instance)
         return success_response(data=serializer.data)
 
     @action(detail=True, methods=["get"], url_path="stats")
     def stats(self, request, pk=None):
-        """
-        GET /api/v1/accounts/users/{id}/stats/
-        Returns isolated performance stats for one staff member.
-        """
+        """GET /api/v1/accounts/users/{id}/stats/"""
         user = self.get_object()
         today = timezone.now().date()
-
         try:
-            txn_qs = user.transactions.all()
-            sales_today = txn_qs.filter(
-                created_at__date=today, status="paid"
-            ).aggregate(t=Sum("total"))["t"] or 0
-            total_sales = txn_qs.filter(status="paid").aggregate(
-                t=Sum("total")
-            )["t"] or 0
-            avg_result = txn_qs.filter(status="paid").aggregate(a=Avg("total"))["a"]
-            avg_ticket = round(avg_result or 0)
-            txns_today = txn_qs.filter(created_at__date=today).count()
-            txns_total = txn_qs.count()
+            txn_qs       = user.transactions.all()
+            sales_today  = txn_qs.filter(created_at__date=today, status="paid").aggregate(t=Sum("total"))["t"] or 0
+            total_sales  = txn_qs.filter(status="paid").aggregate(t=Sum("total"))["t"] or 0
+            avg_ticket   = round(txn_qs.filter(status="paid").aggregate(a=Avg("total"))["a"] or 0)
+            txns_today   = txn_qs.filter(created_at__date=today).count()
+            txns_total   = txn_qs.count()
         except Exception:
             sales_today = total_sales = avg_ticket = txns_today = txns_total = 0
 
-        data = {
-            "user_id":     user.pk,
-            "full_name":   user.full_name,
-            "sales_today": sales_today,
-            "total_sales": total_sales,
-            "avg_ticket":  avg_ticket,
-            "txns_today":  txns_today,
-            "txns_total":  txns_total,
-        }
-        return success_response(data=StaffStatsSerializer(data).data)
+        return success_response(data=StaffStatsSerializer({
+            "user_id": user.pk, "full_name": user.full_name,
+            "sales_today": sales_today, "total_sales": total_sales,
+            "avg_ticket": avg_ticket, "txns_today": txns_today, "txns_total": txns_total,
+        }).data)
 
     @action(detail=False, methods=["get"], url_path="kpis")
     def kpis(self, request):
-        """
-        GET /api/v1/accounts/users/kpis/
-        Store-level staff KPIs: total count, active, on shift today, sales today.
-        """
-        store = request.user.store
-        if not store:
-            return error_response("User is not assigned to a store.", status=400)
+        """GET /api/v1/accounts/users/kpis/ — store-level staff KPIs."""
+        org = request.user.get_organisation
+        if not org:
+            return error_response("User has no organisation.", status=400)
 
-        qs = User.objects.filter(store=store)
-        today = timezone.now().date()
+        # Scope to the user's store if they are staff, else entire org
+        if request.user.role == User.ROLE_STAFF and request.user.store_id:
+            qs = User.objects.filter(store=request.user.store)
+        else:
+            qs = User.objects.filter(
+                Q(organisation=org) | Q(store__organisation=org)
+            )
 
-        total       = qs.count()
-        active      = qs.filter(employment_status=User.EMPLOYMENT_ACTIVE).count()
-        on_leave    = qs.filter(employment_status=User.EMPLOYMENT_ON_LEAVE).count()
-        # "On shift today" = active and shift is not Weekend (on weekdays)
-        # This is a simplification; a real scheduler would check the actual day
-        weekday = timezone.now().weekday()  # 0=Mon, 5=Sat, 6=Sun
-        if weekday < 5:  # Weekday
+        today   = timezone.now().date()
+        total   = qs.count()
+        active  = qs.filter(employment_status=User.EMPLOYMENT_ACTIVE).count()
+        on_leave = qs.filter(employment_status=User.EMPLOYMENT_ON_LEAVE).count()
+
+        weekday = timezone.now().weekday()
+        if weekday < 5:
+            on_shift = qs.filter(employment_status=User.EMPLOYMENT_ACTIVE).exclude(
+                shift=User.SHIFT_WEEKEND
+            ).count()
+        else:
             on_shift = qs.filter(
                 employment_status=User.EMPLOYMENT_ACTIVE,
-            ).exclude(shift=User.SHIFT_WEEKEND).count()
-        else:  # Weekend
-            on_shift = qs.filter(
-                employment_status=User.EMPLOYMENT_ACTIVE,
-                shift=User.SHIFT_WEEKEND,
-            ).count() + qs.filter(
-                employment_status=User.EMPLOYMENT_ACTIVE,
-                shift=User.SHIFT_FULL_DAY,
+                shift__in=(User.SHIFT_WEEKEND, User.SHIFT_FULL_DAY),
             ).count()
 
         try:
             from apps.transactions.models import Transaction
+            store_filter = (
+                Q(store__organisation=org) if request.user.role != User.ROLE_STAFF
+                else Q(store=request.user.store)
+            )
             sales_today = Transaction.objects.filter(
-                cashier__store=store,
-                created_at__date=today,
-                status="paid",
+                store_filter, created_at__date=today, status="paid"
             ).aggregate(t=Sum("total"))["t"] or 0
             txns_today = Transaction.objects.filter(
-                cashier__store=store,
-                created_at__date=today,
+                store_filter, created_at__date=today
             ).count()
         except Exception:
             sales_today = txns_today = 0
 
         return success_response(data={
-            "total_staff":   total,
-            "active":        active,
-            "on_leave":      on_leave,
+            "total_staff":    total,
+            "active":         active,
+            "on_leave":       on_leave,
             "on_shift_today": on_shift,
-            "sales_today":   sales_today,
-            "txns_today":    txns_today,
+            "sales_today":    sales_today,
+            "txns_today":     txns_today,
         })
 
 
@@ -359,38 +463,53 @@ class UserViewSet(ModelViewSet):
 
 class StoreViewSet(ModelViewSet):
     """
-    CRUD endpoints for store management.
-
     GET    /api/v1/accounts/stores/       → list stores
-    POST   /api/v1/accounts/stores/       → create a store
+    POST   /api/v1/accounts/stores/       → create a store (owner only, within max_stores limit)
     GET    /api/v1/accounts/stores/{id}/  → store detail
     PATCH  /api/v1/accounts/stores/{id}/  → update store
     """
 
     queryset = Store.objects.select_related("organisation").prefetch_related("staff")
     serializer_class = StoreSerializer
-    permission_classes = [IsAuthenticated, IsStoreManager]
+    permission_classes = [IsAuthenticated, IsOwner]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if user.role == User.ROLE_ADMIN:
+            return qs
+        org = user.get_organisation
+        if org:
+            return qs.filter(organisation=org)
+        return qs.none()
 
     def list(self, request, *args, **kwargs):
-        """Return stores. Admin sees all; managers see their own store."""
         queryset = self.get_queryset()
-
-        # Non-admins only see their own store
-        if request.user.role != "admin":
-            queryset = queryset.filter(id=request.user.store_id)
-
-        serializer = self.get_serializer(queryset, many=True)
         return success_response(
-            data=serializer.data,
+            data=self.get_serializer(queryset, many=True).data,
             message=f"{queryset.count()} store(s) retrieved.",
         )
 
     def create(self, request, *args, **kwargs):
+        org = request.user.get_organisation
+        if not org:
+            return error_response("No organisation found for this account.", status=400)
+
+        # Enforce max_stores limit
+        current_count = org.stores.filter(is_active=True).count()
+        if current_count >= org.max_stores:
+            return error_response(
+                f"You have reached your maximum store limit ({org.max_stores}). "
+                "Purchase an extra store slot to add more branches.",
+                status=403,
+            )
+
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors)
-        store = serializer.save()
-        logger.info("Admin %s created store '%s'.", request.user.username, store.name)
+
+        store = serializer.save(organisation=org)
+        logger.info("Owner %s created store '%s'.", request.user.phone, store.name)
         return created_response(
             data=StoreSerializer(store).data,
             message=f"Store '{store.name}' created.",
@@ -404,16 +523,14 @@ class OrganisationView(APIView):
     GET   /api/v1/accounts/organisation/  → get current org
     PATCH /api/v1/accounts/organisation/  → update org settings
 
-    Only admins can see/update organisation settings.
+    Owners can view and update their own organisation.
+    System admins can view any (but should use Django admin for full management).
     """
 
-    permission_classes = [IsAuthenticated, IsOrganisationAdmin]
+    permission_classes = [IsAuthenticated, IsOwner]
 
     def _get_org(self, user):
-        """Get the organisation for the current user via their store."""
-        if user.store and user.store.organisation:
-            return user.store.organisation
-        return None
+        return user.get_organisation
 
     def get(self, request):
         org = self._get_org(request.user)
@@ -441,19 +558,15 @@ class AICreditView(APIView):
     """
     GET /api/v1/accounts/ai-credits/
     Returns current month's AI credit usage for the user's organisation.
-
-    Referenced by:
-      - Sidenav footer: "AI CREDITS · MAY  2,418 / 5,000"
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Return current month AI credits for the user's organisation."""
-        if not request.user.store:
-            return error_response("User is not assigned to a store.", status=400)
+        org = request.user.get_organisation
+        if not org:
+            return error_response("No organisation linked to this account.", status=400)
 
-        org = request.user.store.organisation
         credit = AICredit.get_or_create_current(org)
         return success_response(
             data=AICreditSerializer(credit).data,

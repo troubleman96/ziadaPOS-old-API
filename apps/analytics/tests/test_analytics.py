@@ -40,13 +40,14 @@ from apps.transactions.models import Transaction, TransactionLine
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 def make_base_fixtures():
-    """Create org, store, and cashier user."""
-    org     = Organisation.objects.create(name="Test Org")
-    store   = Store.objects.create(organisation=org, name="Main Store", area="Kariakoo")
-    cashier = User.objects.create_user(
-        username="cashier1", password="pass123!", role="cashier", store=store
+    """Create org, store, and staff user."""
+    org   = Organisation.objects.create(name="Test Org")
+    store = Store.objects.create(organisation=org, name="Main Store", area="Kariakoo")
+    user  = User.objects.create_user(
+        username="0712000001", phone="0712000001", password="pass123!",
+        role="staff", store=store,
     )
-    return org, store, cashier
+    return org, store, user
 
 
 def make_transaction(store, cashier, method="Cash", total=50000, date_offset=0,
@@ -77,10 +78,10 @@ def make_transaction(store, cashier, method="Cash", total=50000, date_offset=0,
     return txn
 
 
-def auth(client, username, password="pass123!"):
-    """Authenticate an APIClient."""
-    resp = client.post(reverse("token_obtain_pair"), {"username": username, "password": password})
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+def auth(client, phone, password="pass123!"):
+    """Authenticate an APIClient via phone + password."""
+    resp = client.post(reverse("login"), {"phone": phone, "password": password})
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
     return client
 
 
@@ -134,7 +135,7 @@ class RevenueAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Build 7 days of data
         today = date.today()
@@ -190,7 +191,7 @@ class TopProductsTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         cat = Category.objects.create(name="Grocery")
         self.p1 = Product.objects.create(
@@ -269,7 +270,7 @@ class SalesBreakdownTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Create categories + products + transactions with lines
         cat_g = Category.objects.create(name="Grocery")
@@ -348,7 +349,7 @@ class ProductPerformanceTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         cat_g = Category.objects.create(name="Grocery")
         cat_b = Category.objects.create(name="Beverage")
@@ -435,7 +436,7 @@ class CustomerAnalyticsTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Create two customers
         self.c1 = Customer.objects.create(
@@ -517,7 +518,7 @@ class CashflowTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         for i in range(7):
             make_transaction(self.store, self.cashier, total=100000, date_offset=i)
@@ -583,7 +584,7 @@ class DashboardTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.cashier = make_base_fixtures()
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000001")
 
         # Today's transaction
         make_transaction(self.store, self.cashier, total=150000, date_offset=0)

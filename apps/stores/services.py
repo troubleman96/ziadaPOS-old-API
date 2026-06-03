@@ -119,7 +119,7 @@ def get_store_week_breakdown(store) -> list[dict]:
 
 def get_store_manager(store):
     """Return the first active manager at this store, or None."""
-    return store.staff.filter(role="manager", is_active=True).first()
+    return store.staff.filter(role__in=("owner", "admin"), is_active=True).first()
 
 
 # ── Staff on duty ─────────────────────────────────────────────────────────────

@@ -1,70 +1,85 @@
 """
 apps/core/permissions.py
 
-Custom DRF permission classes for Ziada.
+Custom DRF permission classes for Ziada POS.
 
-Hierarchy:
-  - IsOrganisationAdmin  → can manage the whole organisation
-  - IsStoreManager       → can manage a specific store
-  - IsStoreCashier       → can create/edit transactions within their till
-  - IsReadOnly           → GET requests only
+Role hierarchy:
+  admin  → Cameltech platform admin. Access to everything.
+  owner  → Business owner. Full access within their own organisation.
+  staff  → Store employee. POS access within their assigned store.
 
-Usage in views:
-    class ProductViewSet(viewsets.ModelViewSet):
-        permission_classes = [IsAuthenticated, IsStoreManager]
+Permission class map:
+  IsSystemAdmin   → role == "admin"                    (Cameltech only)
+  IsOwner         → role in ("admin", "owner")         (org-level management)
+  IsStoreStaff    → any authenticated role             (POS operations)
+  IsReadOnly      → SAFE_METHODS only
+
+Backward-compatible aliases (for existing views not yet migrated):
+  IsOrganisationAdmin → IsSystemAdmin
+  IsStoreManager      → IsOwner
+  IsStoreCashier      → IsStoreStaff
 """
 
-from rest_framework.permissions import BasePermission, SAFE_METHODS
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 
-class IsOrganisationAdmin(BasePermission):
+class IsSystemAdmin(BasePermission):
     """
-    Only users with role='admin' and linked to the organisation can access.
-    Used for organisation-wide settings, user management, etc.
+    Cameltech platform admin only (role='admin').
+    Used for: subscription plan management, platform-wide admin panel.
     """
-    message = "Only organisation admins can perform this action."
+    message = "Only Cameltech system admins can perform this action."
 
     def has_permission(self, request, view):
-        # Must be authenticated
-        if not request.user or not request.user.is_authenticated:
-            return False
-        # Must have admin role (set on the User model)
-        return request.user.role == "admin"
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role == "admin"
+        )
 
 
-class IsStoreManager(BasePermission):
+class IsOwner(BasePermission):
     """
-    Users with role='admin' or role='manager' can access.
-    Managers can read/write within their assigned store.
+    Business owners and system admins (role in 'admin', 'owner').
+    Used for: org settings, store creation, staff management, reports.
     """
-    message = "Only store managers or admins can perform this action."
+    message = "Only store owners or system admins can perform this action."
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        return request.user.role in ("admin", "manager")
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in ("admin", "owner")
+        )
 
 
-class IsStoreCashier(BasePermission):
+class IsStoreStaff(BasePermission):
     """
-    Any authenticated staff member (cashier, manager, admin) can access.
-    This covers POS operations — all staff can create transactions.
+    Any authenticated user with a valid role (admin, owner, staff).
+    Used for: POS operations, transactions, credit tabs.
     """
     message = "Authenticated store staff required."
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        # All staff roles can perform cashier actions
-        return request.user.role in ("admin", "manager", "cashier")
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in ("admin", "owner", "staff")
+        )
 
 
 class IsReadOnly(BasePermission):
-    """
-    Allow GET, HEAD, OPTIONS requests only.
-    Useful for public-read / protected-write patterns.
-    """
+    """Allow GET, HEAD, OPTIONS only."""
     message = "This endpoint is read-only."
 
     def has_permission(self, request, view):
         return request.method in SAFE_METHODS
+
+
+# ── Backward-compatible aliases ────────────────────────────────────────────────
+# Existing views reference these names; aliased so they don't break while we
+# migrate view-by-view to the new names.
+
+IsOrganisationAdmin = IsSystemAdmin   # old name → now Cameltech-admin only
+IsStoreManager      = IsOwner         # old name → now owner + admin
+IsStoreCashier      = IsStoreStaff    # old name → now all staff roles

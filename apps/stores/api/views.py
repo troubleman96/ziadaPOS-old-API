@@ -119,8 +119,8 @@ class StoreViewSet(ModelViewSet):
         POST /api/v1/stores/
         Admin only. Automatically assigns to the user's organisation.
         """
-        if request.user.role != "admin":
-            return error_response("Only organisation admins can create stores.", status=403)
+        if request.user.role not in ("admin", "owner"):
+            return error_response("Only owners or admins can create stores.", status=403)
 
         org = self._get_org()
         if not org:
@@ -149,12 +149,14 @@ class StoreViewSet(ModelViewSet):
         """
         store = self.get_object()
 
-        if request.user.role not in ("admin", "manager"):
-            return error_response("Only managers or admins can update stores.", status=403)
+        if request.user.role not in ("admin", "owner"):
+            return error_response("Only owners or admins can update stores.", status=403)
 
-        # Managers can only update their own assigned store
-        if request.user.role == "manager" and request.user.store_id != store.id:
-            return error_response("You can only update your own store.", status=403)
+        # Owners can only update stores within their own organisation
+        if request.user.role == "owner":
+            org = request.user.get_organisation
+            if not org or store.organisation_id != org.id:
+                return error_response("You can only update your own store.", status=403)
 
         serializer = StoreWriteSerializer(store, data=request.data, partial=True)
         if not serializer.is_valid():
@@ -174,8 +176,8 @@ class StoreViewSet(ModelViewSet):
         DELETE /api/v1/stores/{id}/
         Admin only. Soft-deactivates: sets is_active=False and status=paused.
         """
-        if request.user.role != "admin":
-            return error_response("Only organisation admins can deactivate stores.", status=403)
+        if request.user.role not in ("admin", "owner"):
+            return error_response("Only owners or admins can deactivate stores.", status=403)
 
         store = self.get_object()
         store.is_active = False

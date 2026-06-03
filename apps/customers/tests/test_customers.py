@@ -15,21 +15,23 @@ from apps.customers.models import Customer
 
 def make_base_fixtures():
     """Create shared org, store, manager, and cashier users."""
-    org     = Organisation.objects.create(name="Test Org")
-    store   = Store.objects.create(organisation=org, name="Main", area="Kariakoo")
-    manager = User.objects.create_user(
-        username="mgr1", password="pass123!", role="manager", store=store
+    org   = Organisation.objects.create(name="Test Org")
+    store = Store.objects.create(organisation=org, name="Main", area="Kariakoo")
+    owner = User.objects.create_user(
+        username="0712000001", phone="0712000001", password="pass123!",
+        role="owner", store=store,
     )
-    cashier = User.objects.create_user(
-        username="cashier1", password="pass123!", role="cashier", store=store
+    staff = User.objects.create_user(
+        username="0712000002", phone="0712000002", password="pass123!",
+        role="staff", store=store,
     )
-    return org, store, manager, cashier
+    return org, store, owner, staff
 
 
-def auth(client, username, password="pass123!"):
-    """Authenticate APIClient and return it."""
-    resp = client.post(reverse("token_obtain_pair"), {"username": username, "password": password})
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['access']}")
+def auth(client, phone, password="pass123!"):
+    """Authenticate APIClient via phone + password."""
+    resp = client.post(reverse("login"), {"phone": phone, "password": password})
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {resp.data['data']['access']}")
     return client
 
 
@@ -39,7 +41,7 @@ class CustomerListTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, _ = make_base_fixtures()
-        auth(self.client, "mgr1")
+        auth(self.client, "0712000001")
 
         # Create a few customers
         Customer.objects.create(store=self.store, name="Fatuma Ally",   phone="+255 714 100 001", segment="VIP",      total_spent=1200000)
@@ -82,7 +84,7 @@ class CustomerCreateTests(TestCase):
 
     def test_manager_can_create(self):
         """Manager can add a new customer."""
-        auth(self.client, "mgr1")
+        auth(self.client, "0712000001")
         resp = self.client.post(reverse("customer-list"), {
             "name": "Zawadi Chaka",
             "phone": "+255 769 789 012",
@@ -93,7 +95,7 @@ class CustomerCreateTests(TestCase):
 
     def test_cashier_cannot_create(self):
         """Cashier does not have permission to create customers."""
-        auth(self.client, "cashier1")
+        auth(self.client, "0712000002")
         resp = self.client.post(reverse("customer-list"), {
             "name": "Unauthorised User",
             "phone": "+255 769 000 001",
@@ -103,7 +105,7 @@ class CustomerCreateTests(TestCase):
 
     def test_duplicate_phone_rejected(self):
         """Duplicate phone within the same store is rejected."""
-        auth(self.client, "mgr1")
+        auth(self.client, "0712000001")
         Customer.objects.create(
             store=self.store, name="Fatuma Ally", phone="+255 714 100 001"
         )
@@ -116,7 +118,7 @@ class CustomerCreateTests(TestCase):
 
     def test_missing_name_rejected(self):
         """Name is required."""
-        auth(self.client, "mgr1")
+        auth(self.client, "0712000001")
         resp = self.client.post(reverse("customer-list"), {
             "phone": "+255 769 000 002",
             "segment": "New",
@@ -130,7 +132,7 @@ class CustomerDetailTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, self.cashier = make_base_fixtures()
-        auth(self.client, "mgr1")
+        auth(self.client, "0712000001")
         self.customer = Customer.objects.create(
             store=self.store, name="Asha Mwinyi", phone="+255 718 003 982",
             segment="Regular", total_spent=430000,
@@ -204,7 +206,7 @@ class CustomerSummaryTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         _, self.store, self.manager, _ = make_base_fixtures()
-        auth(self.client, "mgr1")
+        auth(self.client, "0712000001")
 
         Customer.objects.create(store=self.store, name="Cust 1", phone="+255 700 000 001", segment="VIP",      total_spent=1000000, open_credit=50000)
         Customer.objects.create(store=self.store, name="Cust 2", phone="+255 700 000 002", segment="Regular",  total_spent=300000,  open_credit=0)
