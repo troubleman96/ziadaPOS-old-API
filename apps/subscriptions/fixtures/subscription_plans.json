@@ -1,0 +1,53 @@
+[
+  {
+    "model": "subscriptions.subscriptionplan",
+    "pk": 1,
+    "fields": {
+      "name": "Monthly",
+      "slug": "monthly",
+      "description": "Month-to-month plan. Cancel anytime.",
+      "price_per_month": 25000,
+      "duration_months": 1,
+      "included_stores": 3,
+      "extra_store_price_per_month": 12000,
+      "is_active": true,
+      "sort_order": 1,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "subscriptions.subscriptionplan",
+    "pk": 2,
+    "fields": {
+      "name": "6-Month Package",
+      "slug": "half-yearly",
+      "description": "Save 8% — pay for 6 months upfront at 23,000 TZS/month.",
+      "price_per_month": 23000,
+      "duration_months": 6,
+      "included_stores": 3,
+      "extra_store_price_per_month": 12000,
+      "is_active": true,
+      "sort_order": 2,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "subscriptions.subscriptionplan",
+    "pk": 3,
+    "fields": {
+      "name": "Yearly Package",
+      "slug": "yearly",
+      "description": "Best value — pay for 12 months at 22,000 TZS/month. Save 12%.",
+      "price_per_month": 22000,
+      "duration_months": 12,
+      "included_stores": 3,
+      "extra_store_price_per_month": 12000,
+      "is_active": true,
+      "sort_order": 3,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  }
+]
