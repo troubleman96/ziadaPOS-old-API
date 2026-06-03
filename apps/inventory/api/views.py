@@ -220,11 +220,12 @@ class ProductViewSet(ModelViewSet):
         Store is injected from the authenticated user — clients cannot override it.
         Category is auto-created if `category_name_input` is supplied and the
         category does not already exist.
+        Accepts multipart/form-data so an optional `image` file can be uploaded.
         """
         data = request.data.copy()
         data["store"] = str(request.user.store_id)
 
-        serializer = ProductSerializer(data=data)
+        serializer = ProductSerializer(data=data, context={"request": request})
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors)
 
@@ -234,19 +235,21 @@ class ProductViewSet(ModelViewSet):
             request.user.username, product.name, product.sku,
         )
         return created_response(
-            data=ProductSerializer(product).data,
+            data=ProductSerializer(product, context={"request": request}).data,
             message=f"Product '{product.name}' created.",
         )
 
     def partial_update(self, request, *args, **kwargs):
         product = self.get_object()
-        serializer = ProductSerializer(product, data=request.data, partial=True)
+        serializer = ProductSerializer(
+            product, data=request.data, partial=True, context={"request": request}
+        )
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors)
         serializer.save()
         logger.info("User %s updated product '%s'.", request.user.username, product.name)
         return success_response(
-            data=ProductSerializer(product).data,
+            data=ProductSerializer(product, context={"request": request}).data,
             message="Product updated.",
         )
 

@@ -61,10 +61,12 @@ class ProductMinimalSerializer(serializers.ModelSerializer):
       stock_status           → 'active' | 'low' | 'critical' | 'out'
       color                  → card avatar colour scheme
       category_name          → category filter pill matching
+      image_url              → absolute URL to product image (null if none)
     """
 
     stock_status  = serializers.CharField(read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
+    image_url     = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -73,7 +75,16 @@ class ProductMinimalSerializer(serializers.ModelSerializer):
             "price", "stock", "stock_status",
             "color", "unit",
             "category", "category_name",
+            "image_url",
         ]
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
 
 
 # ── Product (full) ────────────────────────────────────────────────────────────
@@ -97,6 +108,17 @@ class ProductSerializer(serializers.ModelSerializer):
     # Embedded display names (avoids extra round-trips from the frontend)
     category_name  = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     supplier_name  = serializers.CharField(source="supplier.name", read_only=True, allow_null=True)
+
+    # Absolute URL for the product image (null when no image uploaded)
+    image_url = serializers.SerializerMethodField()
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
 
     # Write-only — accepts a category name and auto-creates when needed
     category_name_input = serializers.CharField(
@@ -122,6 +144,9 @@ class ProductSerializer(serializers.ModelSerializer):
             "supplier", "supplier_name",
             "unit", "color",
 
+            # Image
+            "image", "image_url",
+
             # Pricing
             "price", "cost", "margin_pct",
 
@@ -137,7 +162,7 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id", "margin_pct", "stock_status", "days_of_stock",
-            "created_at", "updated_at",
+            "image_url", "created_at", "updated_at",
         ]
 
     # ── Validation ────────────────────────────────────────────────────────────

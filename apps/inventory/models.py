@@ -171,6 +171,16 @@ class Product(BaseModel):
     )
 
     # ── UI presentation ────────────────────────────────────────────────────────
+    # Optional product image — shown in POS grid and inventory list.
+    # Development: stored in MEDIA_ROOT/products/
+    # Production:  swap DEFAULT_FILE_STORAGE to MinIO/S3 (see settings/production.py)
+    image = models.ImageField(
+        upload_to="products/",
+        blank=True,
+        null=True,
+        help_text="Optional product photo. Shown in POS grid and inventory list.",
+    )
+
     # Color scheme key for product avatar/thumbnail in UI
     # Values: indigo, amber, rose, lime, emerald, violet, cyan
     color = models.CharField(

@@ -25,6 +25,8 @@ URL structure:
   /api/v1/subscriptions/       → Subscription plans (public), owner status, admin panel
 """
 
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
@@ -75,3 +77,9 @@ urlpatterns = [
         path("subscriptions/", include("apps.subscriptions.api.urls")),
     ])),
 ]
+
+# ── Media files (development only) ───────────────────────────────────────────
+# In production, media is served by MinIO/S3 via DEFAULT_FILE_STORAGE.
+# The static() helper returns an empty list when DEBUG=False so this is safe.
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
