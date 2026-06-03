@@ -1,0 +1,317 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  /* ── Dashboard layout ─────────────────────────────────────────────────────── */
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .kpi-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 18px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    border-left: 4px solid var(--accent, #417690);
+    min-height: 80px;
+  }
+  .kpi-card .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #666;
+    margin-bottom: 6px;
+  }
+  .kpi-card .value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #222;
+    line-height: 1;
+  }
+  .kpi-card.green  { border-left-color: #10b981; }
+  .kpi-card.blue   { border-left-color: #3b82f6; }
+  .kpi-card.amber  { border-left-color: #f59e0b; }
+  .kpi-card.red    { border-left-color: #ef4444; }
+  .kpi-card.purple { border-left-color: #8b5cf6; }
+
+  /* ── Chart cards ─────────────────────────────────────────────────────────── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+  .chart-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .chart-card h3 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .chart-card canvas {
+    max-height: 220px;
+  }
+
+  /* ── Module list (recent activity) ──────────────────────────────────────── */
+  #content-main .module.full-width {
+    width: 100%;
+    margin-bottom: 20px;
+  }
+</style>
+{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<!-- Chart.js from CDN — no server-side package needed -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+
+  <!-- ── Section title ──────────────────────────────────────────────────────── -->
+  <h2 style="margin: 0 0 18px; font-size:15px; color:#333; font-weight:600;">
+    Platform Overview
+    <small style="font-size:11px;color:#999;font-weight:400;margin-left:8px">
+      {{ today }} · All times in Africa/Dar_es_Salaam (TZ)
+    </small>
+  </h2>
+
+  <!-- ── KPI cards ─────────────────────────────────────────────────────────── -->
+  <div class="dashboard-grid">
+    <div class="kpi-card blue">
+      <div class="label">Organisations</div>
+      <div class="value">{{ kpi_total_orgs }}</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="label">Store Owners</div>
+      <div class="value">{{ kpi_total_owners }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Staff Users</div>
+      <div class="value">{{ kpi_total_staff }}</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="label">New Orgs (This Month)</div>
+      <div class="value">{{ kpi_new_orgs_this_month }}</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="label">Logins Today</div>
+      <div class="value">{{ kpi_logins_today }}</div>
+    </div>
+    <div class="kpi-card blue">
+      <div class="label">Active Users Today</div>
+      <div class="value">{{ kpi_active_users_today }}</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="label">API Requests Today</div>
+      <div class="value">{{ kpi_requests_today }}</div>
+    </div>
+  </div>
+
+  <!-- ── Charts row 1 ──────────────────────────────────────────────────────── -->
+  <div class="charts-grid">
+
+    <div class="chart-card">
+      <h3>Daily Logins — Last 30 Days</h3>
+      <canvas id="chartLogins"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>API Calls Per Day — Last 14 Days</h3>
+      <canvas id="chartAPI"></canvas>
+    </div>
+
+  </div>
+
+  <!-- ── Charts row 2 ──────────────────────────────────────────────────────── -->
+  <div class="charts-grid">
+
+    <div class="chart-card">
+      <h3>Top 10 Endpoints — Last 7 Days</h3>
+      <canvas id="chartEndpoints"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>New Organisations — Last 30 Days</h3>
+      <canvas id="chartOrgs"></canvas>
+    </div>
+
+  </div>
+
+  <!-- ── Charts row 3 ──────────────────────────────────────────────────────── -->
+  <div class="charts-grid">
+
+    <div class="chart-card">
+      <h3>Subscription Status Breakdown</h3>
+      <canvas id="chartSubStatus"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>Avg Response Time by Endpoint (ms) — Last 7 Days</h3>
+      <canvas id="chartResponseTime"></canvas>
+    </div>
+
+  </div>
+
+  <!-- ── Standard Django app/model list ────────────────────────────────────── -->
+  <hr style="margin: 24px 0; border: none; border-top: 1px solid #e5e7eb;">
+  <h2 style="margin: 0 0 14px; font-size:14px; color:#555; font-weight:600;">
+    Application Models
+  </h2>
+
+  {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+
+</div>
+
+<!-- ── Chart initialisation ──────────────────────────────────────────────── -->
+<script>
+(function () {
+  // Common chart options
+  const lineOpts = {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+      y: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } }
+    }
+  };
+  const barOpts = {
+    responsive: true,
+    indexAxis: "y",
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } },
+      y: { ticks: { font: { size: 10 } } }
+    }
+  };
+  const doughnutOpts = {
+    responsive: true,
+    plugins: { legend: { position: "right", labels: { font: { size: 10 } } } }
+  };
+
+  // ── Daily Logins ────────────────────────────────────────────────────────
+  const loginsData = {{ chart_daily_logins|safe }};
+  new Chart(document.getElementById("chartLogins"), {
+    type: "line",
+    data: {
+      labels: loginsData.labels,
+      datasets: [{
+        label: "Logins",
+        data: loginsData.data,
+        borderColor: "#3b82f6",
+        backgroundColor: "rgba(59,130,246,.12)",
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+      }]
+    },
+    options: lineOpts
+  });
+
+  // ── Daily API calls ─────────────────────────────────────────────────────
+  const apiData = {{ chart_daily_api|safe }};
+  new Chart(document.getElementById("chartAPI"), {
+    type: "line",
+    data: {
+      labels: apiData.labels,
+      datasets: [{
+        label: "Requests",
+        data: apiData.data,
+        borderColor: "#8b5cf6",
+        backgroundColor: "rgba(139,92,246,.12)",
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+      }]
+    },
+    options: lineOpts
+  });
+
+  // ── Top endpoints ──────────────────────────────────────────────────────
+  const epData = {{ chart_top_endpoints|safe }};
+  new Chart(document.getElementById("chartEndpoints"), {
+    type: "bar",
+    data: {
+      labels: epData.labels,
+      datasets: [{
+        label: "Calls",
+        data: epData.data,
+        backgroundColor: "rgba(16,185,129,.7)",
+        borderRadius: 4,
+      }]
+    },
+    options: barOpts
+  });
+
+  // ── New organisations ─────────────────────────────────────────────────
+  const orgData = {{ chart_daily_orgs|safe }};
+  new Chart(document.getElementById("chartOrgs"), {
+    type: "bar",
+    data: {
+      labels: orgData.labels,
+      datasets: [{
+        label: "New Orgs",
+        data: orgData.data,
+        backgroundColor: "rgba(245,158,11,.7)",
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } }
+      }
+    }
+  });
+
+  // ── Subscription status doughnut ───────────────────────────────────────
+  const subData = {{ chart_sub_status|safe }};
+  new Chart(document.getElementById("chartSubStatus"), {
+    type: "doughnut",
+    data: {
+      labels: subData.labels,
+      datasets: [{
+        data: subData.data,
+        backgroundColor: ["#94a3b8","#f59e0b","#10b981","#ef4444","#6b7280"],
+        hoverOffset: 6,
+      }]
+    },
+    options: doughnutOpts
+  });
+
+  // ── Avg response time ─────────────────────────────────────────────────
+  const rtData = {{ chart_response_times|safe }};
+  new Chart(document.getElementById("chartResponseTime"), {
+    type: "bar",
+    data: {
+      labels: rtData.labels,
+      datasets: [{
+        label: "Avg ms",
+        data: rtData.data,
+        backgroundColor: rtData.data.map(v =>
+          v < 100 ? "rgba(16,185,129,.7)" :
+          v < 500 ? "rgba(245,158,11,.7)" : "rgba(239,68,68,.7)"
+        ),
+        borderRadius: 4,
+      }]
+    },
+    options: barOpts
+  });
+
+})();
+</script>
+{% endblock %}

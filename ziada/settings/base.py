@@ -90,6 +90,8 @@ LOCAL_APPS = [
     "apps.staff.apps.StaffConfig",
     # Subscription plans and billing management
     "apps.subscriptions.apps.SubscriptionsConfig",
+    # API request tracking and admin dashboard analytics
+    "apps.tracking.apps.TrackingConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -108,6 +110,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # API request logging — must be last so request.user is populated by auth middleware
+    "apps.tracking.middleware.RequestLogMiddleware",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +127,8 @@ ROOT_URLCONF = "ziada.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        # Include backend/templates/ so our admin/index.html override is found
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [

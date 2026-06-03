@@ -149,6 +149,18 @@ class PhoneLoginView(APIView):
                     "end_date":       str(sub.end_date),
                 }
 
+        # Record login event for admin dashboard tracking
+        try:
+            from apps.tracking.models import LoginEvent
+            LoginEvent.objects.create(
+                user_id    = user.pk,
+                user_phone = user.phone,
+                user_role  = user.role,
+                org_name   = org.name if org else "",
+            )
+        except Exception:
+            pass
+
         logger.info("User login: phone=%s role=%s", user.phone, user.role)
 
         return success_response(

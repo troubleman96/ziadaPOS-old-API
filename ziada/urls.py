@@ -2,10 +2,13 @@
 Ziada POS — Root URL configuration.
 
 All API routes are namespaced under /api/v1/ to allow for future versioning.
-Django Admin is available at /admin/ out of the box.
+Django Admin is available at /admin/ with a custom dashboard that shows:
+  - KPI cards (total orgs, owners, staff, logins today, API requests)
+  - Chart.js graphs: daily logins, API calls, top endpoints, new registrations,
+    subscription status breakdown, average response times
 
 URL structure:
-  /admin/                      → Django Admin
+  /admin/                      → Django Admin (custom dashboard)
   /api/v1/auth/                → JWT token endpoints (login, refresh, verify)
   /api/v1/accounts/            → Users, stores, staff
   /api/v1/inventory/           → Products, categories, suppliers
@@ -25,58 +28,50 @@ URL structure:
 from django.contrib import admin
 from django.urls import include, path
 
-# Customise the Django Admin header/title
-admin.site.site_header = "Ziada POS Admin"
-admin.site.site_title = "Ziada Admin"
-admin.site.index_title = "Ziada POS — Administration"
+# Apply our custom admin site header and custom index with charts.
+# The dashboard template (templates/admin/index.html) is found automatically
+# because BASE_DIR/templates is in settings.TEMPLATES[0]["DIRS"].
+admin.site.site_header  = "Ziada POS — Admin"
+admin.site.site_title   = "Ziada Admin"
+admin.site.index_title  = "Platform Dashboard"
+
+# Monkey-patch the admin index to inject dashboard chart data.
+# This is done here (not in apps/tracking) to avoid circular imports —
+# tracking/admin.py imports from accounts models which may not be ready yet.
+_original_index = admin.site.__class__.index
+
+def _patched_index(self, request, extra_context=None):
+    extra_context = extra_context or {}
+    try:
+        from apps.tracking.admin import _get_dashboard_context
+        from django.utils import timezone as tz
+        extra_context.update(_get_dashboard_context())
+        extra_context["today"] = tz.now().strftime("%d %b %Y")
+    except Exception:
+        extra_context.setdefault("today", "")
+    return _original_index(self, request, extra_context)
+
+admin.site.__class__.index = _patched_index
 
 urlpatterns = [
-    # ── Django Admin ──────────────────────────────────────────────────────────
+    # ── Django Admin (custom dashboard with Chart.js) ─────────────────────────
     path("admin/", admin.site.urls),
 
     # ── API v1 ────────────────────────────────────────────────────────────────
-    # All API routes live under /api/v1/ for clean versioning
     path("api/v1/", include([
-        # JWT auth — login, refresh, verify (no authentication required)
-        path("auth/", include("apps.accounts.api.auth_urls")),
-
-        # Accounts — users, stores, staff profiles
-        path("accounts/", include("apps.accounts.api.urls")),
-
-        # Inventory — products, categories, suppliers, stock
-        path("inventory/", include("apps.inventory.api.urls")),
-
-        # Transactions — sales, POS, refunds
-        path("transactions/", include("apps.transactions.api.urls")),
-
-        # Credits — customer debt (madeni) management
-        path("credits/", include("apps.credits.api.urls")),
-
-        # Customers — profiles, segments, loyalty
-        path("customers/", include("apps.customers.api.urls")),
-
-        # Analytics — aggregations, trends, insights
-        path("analytics/", include("apps.analytics.api.urls")),
-
-        # Reports — generation, export history, scheduled reports
-        path("reports/", include("apps.reports.api.urls")),
-
-        # AI — chat, insights, OpenRouter
-        path("ai/", include("apps.ai.api.urls")),
-
-        # Suppliers — vendor management, deliveries, payments (AP)
-        path("suppliers/", include("apps.suppliers.api.urls")),
-
-        # Stores — multi-store management, KPIs, staff rosters
-        path("stores/", include("apps.stores.api.urls")),
-
-        # Notebook — internal memos, ideas, and staff notes (per store)
-        path("notebook/", include("apps.notebook.api.urls")),
-
-        # Staff — management, shifts, permissions, performance stats
-        path("staff/", include("apps.staff.api.urls")),
-
-        # Subscriptions — plans (public), owner subscription status, admin activation
+        path("auth/",          include("apps.accounts.api.auth_urls")),
+        path("accounts/",      include("apps.accounts.api.urls")),
+        path("inventory/",     include("apps.inventory.api.urls")),
+        path("transactions/",  include("apps.transactions.api.urls")),
+        path("credits/",       include("apps.credits.api.urls")),
+        path("customers/",     include("apps.customers.api.urls")),
+        path("analytics/",     include("apps.analytics.api.urls")),
+        path("reports/",       include("apps.reports.api.urls")),
+        path("ai/",            include("apps.ai.api.urls")),
+        path("suppliers/",     include("apps.suppliers.api.urls")),
+        path("stores/",        include("apps.stores.api.urls")),
+        path("notebook/",      include("apps.notebook.api.urls")),
+        path("staff/",         include("apps.staff.api.urls")),
         path("subscriptions/", include("apps.subscriptions.api.urls")),
     ])),
 ]
