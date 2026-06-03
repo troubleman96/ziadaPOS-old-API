@@ -22,6 +22,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction as db_transaction
+from django.db.models import Avg, Count, FloatField, Q, Sum
 from django.utils import timezone
 from rest_framework import filters
 from rest_framework.decorators import action
@@ -215,8 +216,6 @@ class TransactionViewSet(ReadOnlyModelViewSet):
           ?date_from=2026-05-24
           ?date_to=2026-05-24
         """
-        from django.db.models import Count, Sum
-
         qs = self.filter_queryset(self.get_queryset())
 
         agg = qs.aggregate(
@@ -247,6 +246,105 @@ class TransactionViewSet(ReadOnlyModelViewSet):
             data["margin_pct"] = 0.0
 
         return success_response(data=data, message="Transaction summary.")
+
+    @action(detail=False, methods=["get"], url_path="discount-summary")
+    def discount_summary(self, request):
+        """
+        GET /api/v1/transactions/discount-summary/
+
+        Discount analytics for the /discounts page.
+
+        Query params (same as summary):
+          ?date_from, ?date_to  → date range filter
+
+        Returns:
+          total_discount_amount  → total TZS given as discounts
+          discounted_count       → number of transactions with discount > 0
+          total_transactions     → total transactions in range
+          discount_rate          → % of transactions with a discount
+          avg_discount_pct       → average discount % across discounted txns
+          avg_discount_amount    → average discount TZS across discounted txns
+          by_cashier             → top cashiers by discount amount
+          by_day                 → daily discount totals (last 30 days)
+          largest_discounts      → top 5 largest single discounts
+        """
+        from django.db.models.functions import TruncDate
+
+        qs = self.filter_queryset(self.get_queryset()).filter(
+            status__in=[Transaction.STATUS_PAID, Transaction.STATUS_CREDIT]
+        )
+
+        discounted_qs = qs.filter(discount_amount__gt=0)
+
+        # Top-level aggregates
+        total_agg = qs.aggregate(
+            total=Count("id"),
+            discount_total=Sum("discount_amount"),
+            disc_count=Count("id", filter=Q(discount_amount__gt=0)),
+        )
+        disc_agg = discounted_qs.aggregate(
+            avg_pct=Avg("discount_pct", output_field=FloatField()),
+            avg_amount=Avg("discount_amount", output_field=FloatField()),
+        )
+
+        total_count = total_agg["total"] or 0
+        disc_count  = total_agg["disc_count"] or 0
+        total_disc  = total_agg["discount_total"] or 0
+
+        # By cashier (top 5)
+        by_cashier = list(
+            discounted_qs
+            .values("cashier__first_name", "cashier__last_name", "cashier_id")
+            .annotate(
+                amount=Sum("discount_amount"),
+                count=Count("id"),
+                avg_pct=Avg("discount_pct", output_field=FloatField()),
+            )
+            .order_by("-amount")[:5]
+        )
+        for row in by_cashier:
+            fn = row.pop("cashier__first_name") or ""
+            ln = row.pop("cashier__last_name") or ""
+            row["cashier_name"] = (fn + " " + ln).strip() or "Unknown"
+
+        # Daily totals (last 30 days of the filtered range)
+        by_day = list(
+            discounted_qs
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(amount=Sum("discount_amount"), count=Count("id"))
+            .order_by("day")
+        )
+        for row in by_day:
+            row["day"] = str(row["day"])
+
+        # Largest individual discounts (top 5)
+        largest = list(
+            discounted_qs
+            .order_by("-discount_amount")[:5]
+            .values(
+                "txn_number", "customer_name",
+                "discount_amount", "discount_pct",
+                "total", "created_at",
+            )
+        )
+        for row in largest:
+            row["created_at"] = str(row["created_at"])
+
+        return success_response(
+            data={
+                "total_discount_amount":  total_disc,
+                "discounted_count":       disc_count,
+                "total_transactions":     total_count,
+                "discount_rate":          round(disc_count / total_count * 100, 1) if total_count else 0,
+                "avg_discount_pct":       round(disc_agg["avg_pct"] or 0, 1),
+                "avg_discount_amount":    round(disc_agg["avg_amount"] or 0),
+                "by_cashier":             by_cashier,
+                "by_day":                 by_day,
+                "largest_discounts":      largest,
+            },
+            message="Discount summary.",
+        )
 
 
 # ── Complete Sale (POS checkout) ──────────────────────────────────────────────

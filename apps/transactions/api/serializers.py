@@ -116,6 +116,7 @@ class TransactionListSerializer(serializers.ModelSerializer):
             "id", "txn_number", "store",
             "customer_name", "customer_phone",
             "payment_method", "payment_reference", "status",
+            "subtotal", "discount_pct", "discount_amount",
             "total", "profit",
             "cashier_name", "till_number",
             "sku_count", "item_count",
