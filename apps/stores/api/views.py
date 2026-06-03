@@ -53,11 +53,11 @@ class StoreViewSet(ModelViewSet):
     # ── Queryset ──────────────────────────────────────────────────────────────
 
     def _get_org(self):
-        """Return the organisation for the current user (via their store)."""
-        user = self.request.user
-        if user.store and user.store.organisation_id:
-            return user.store.organisation
-        return None
+        """Return the organisation for the current user.
+        Uses get_organisation which checks both the direct org FK (owners)
+        and the store → organisation chain (staff).
+        """
+        return self.request.user.get_organisation
 
     def get_queryset(self):
         org = self._get_org()
@@ -117,7 +117,8 @@ class StoreViewSet(ModelViewSet):
     def create(self, request, *args, **kwargs):
         """
         POST /api/v1/stores/
-        Admin only. Automatically assigns to the user's organisation.
+        Creates a new branch for the owner's organisation.
+        Enforces the subscription-driven max_stores limit.
         """
         if request.user.role not in ("admin", "owner"):
             return error_response("Only owners or admins can create stores.", status=403)
@@ -125,6 +126,31 @@ class StoreViewSet(ModelViewSet):
         org = self._get_org()
         if not org:
             return error_response("User is not linked to an organisation.", status=400)
+
+        # ── Subscription-driven store limit check ─────────────────────────────
+        current_count = org.stores.filter(is_active=True).count()
+        if current_count >= org.max_stores:
+            from apps.subscriptions.api.views import _DEFAULT_EXTRA_STORE_PRICE
+            sub = org.subscriptions.order_by("-created_at").first()
+            extra_price = _DEFAULT_EXTRA_STORE_PRICE
+            if sub and sub.plan:
+                extra_price = sub.plan.extra_store_price_per_month
+
+            return error_response(
+                message=(
+                    f"Store limit reached ({current_count}/{org.max_stores}). "
+                    f"Additional stores cost {extra_price:,} TZS/month. "
+                    "Contact Ziada support to purchase more store slots."
+                ),
+                errors={
+                    "can_add_store":               False,
+                    "current_active_stores":       current_count,
+                    "max_stores_allowed":          org.max_stores,
+                    "extra_store_price_per_month": extra_price,
+                    "action":                      "contact_support",
+                },
+                status=403,
+            )
 
         data = request.data.copy()
         data["organisation"] = str(org.id)
@@ -134,7 +160,7 @@ class StoreViewSet(ModelViewSet):
             return error_response("Validation failed.", errors=serializer.errors)
 
         store = serializer.save()
-        logger.info("Admin %s created store '%s'.", request.user.username, store.name)
+        logger.info("Owner %s created store '%s'.", request.user.phone, store.name)
         return created_response(
             data=StoreListSerializer(store).data,
             message=f"Store '{store.name}' created.",

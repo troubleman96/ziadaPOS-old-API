@@ -107,7 +107,11 @@ class StoreDetailSerializer(StoreListSerializer):
 class StoreWriteSerializer(serializers.ModelSerializer):
     """
     Write serializer for create + partial update.
-    Excludes computed/KPI fields — only persisted model fields.
+
+    NOTE: is_active is intentionally excluded — new stores are always active.
+    Deactivation happens via the DELETE endpoint (soft-delete).
+    Including a BooleanField with no value in multipart/form-data causes DRF
+    to default it to False, which would create inactive stores unexpectedly.
     """
 
     class Meta:
@@ -116,7 +120,7 @@ class StoreWriteSerializer(serializers.ModelSerializer):
             "organisation",
             "name", "code", "area", "address",
             "phone", "email", "open_hours", "color",
-            "till_count", "status", "is_active",
+            "till_count", "status",
         ]
 
     def validate_name(self, value):

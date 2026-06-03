@@ -143,13 +143,13 @@ class StoreTests(TestCase):
 
     def test_list_stores(self):
         """GET /api/v1/accounts/stores/ returns stores list."""
-        resp = self.client.get(reverse("store-list"))
+        resp = self.client.get(reverse("account-store-list"))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(resp.data["success"])
 
     def test_create_store(self):
         """POST /api/v1/accounts/stores/ creates a new store (within max_stores=3)."""
-        resp = self.client.post(reverse("store-list"), {
+        resp = self.client.post(reverse("account-store-list"), {
             "organisation": str(self.org.id),
             "name":         "Mwenge Branch",
             "area":         "Mwenge",

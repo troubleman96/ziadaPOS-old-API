@@ -495,12 +495,29 @@ class StoreViewSet(ModelViewSet):
         if not org:
             return error_response("No organisation found for this account.", status=400)
 
-        # Enforce max_stores limit
         current_count = org.stores.filter(is_active=True).count()
+
+        # Enforce the subscription-driven store limit with a rich error payload
         if current_count >= org.max_stores:
+            from apps.subscriptions.api.views import _DEFAULT_EXTRA_STORE_PRICE
+            sub = org.subscriptions.order_by("-created_at").first()
+            extra_price = _DEFAULT_EXTRA_STORE_PRICE
+            if sub and sub.plan:
+                extra_price = sub.plan.extra_store_price_per_month
+
             return error_response(
-                f"You have reached your maximum store limit ({org.max_stores}). "
-                "Purchase an extra store slot to add more branches.",
+                message=(
+                    f"Store limit reached ({current_count}/{org.max_stores}). "
+                    f"Additional stores cost {extra_price:,} TZS/month. "
+                    "Contact Ziada support to purchase more store slots."
+                ),
+                errors={
+                    "can_add_store":              False,
+                    "current_active_stores":      current_count,
+                    "max_stores_allowed":         org.max_stores,
+                    "extra_store_price_per_month": extra_price,
+                    "action":                     "contact_support",
+                },
                 status=403,
             )
 

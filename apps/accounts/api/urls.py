@@ -31,7 +31,8 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r"users",  UserViewSet,  basename="user")
-router.register(r"stores", StoreViewSet, basename="store")
+# basename="account-store" avoids collision with apps/stores/api/urls.py which uses "store"
+router.register(r"stores", StoreViewSet, basename="account-store")
 
 urlpatterns = [
     path("me/",                 MeView.as_view(),             name="me"),

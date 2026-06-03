@@ -358,6 +358,81 @@ python manage.py migrate
 
 ---
 
+---
+
+## 14. Store Limit System (Update 2)
+
+### GET `/api/v1/subscriptions/store-limit/` — new endpoint
+
+Returns whether the owner can add another store and full pricing info for the UI to gate the "Add Store" button.
+
+```json
+{
+  "success": true,
+  "data": {
+    "can_add_store": false,
+    "current_active_stores": 3,
+    "max_stores_allowed": 3,
+    "remaining_slots": 0,
+    "extra_store_price_per_month": 12000,
+    "subscription_status": "active",
+    "subscription_is_active": true,
+    "days_remaining": 18,
+    "message": "You have reached your 3-store limit. Additional stores cost 12,000 TZS/month. Contact Ziada support to purchase more store slots."
+  }
+}
+```
+
+### POST `/api/v1/stores/` — improved 403 response
+
+When at limit, returns machine-readable error with pricing so the UI can display the right CTA:
+
+```json
+{
+  "success": false,
+  "message": "Store limit reached (3/3). Additional stores cost 12,000 TZS/month. Contact Ziada support to purchase more store slots.",
+  "errors": {
+    "can_add_store": false,
+    "current_active_stores": 3,
+    "max_stores_allowed": 3,
+    "extra_store_price_per_month": 12000,
+    "action": "contact_support"
+  }
+}
+```
+
+### `max_stores` sync is now guaranteed
+
+`organisation.max_stores` is automatically updated whenever:
+- Admin activates a subscription
+- Admin grants extra store slots
+
+No manual DB editing required.
+
+### BooleanField fix in StoreWriteSerializer
+
+Removed `is_active` from `StoreWriteSerializer` fields — DRF's BooleanField defaults to `False` when absent from multipart form data, causing silently inactive stores. New stores are always created active; deactivation uses the DELETE endpoint.
+
+---
+
+## 15. Files Changed (Update 2)
+
+| File | Change |
+|------|--------|
+| `apps/subscriptions/api/views.py` | New `StoreLimitView`, fixed `activate()` to sync `max_stores`, improved `extra_stores()` |
+| `apps/subscriptions/api/urls.py` | Added `/store-limit/` endpoint |
+| `apps/stores/api/views.py` | Added store limit check to `create()`, fixed `_get_org()` to use `get_organisation` |
+| `apps/stores/api/serializers.py` | Removed `is_active` from `StoreWriteSerializer` to prevent BooleanField default-to-False bug |
+| `apps/accounts/api/views.py` | Improved limit error response with machine-readable pricing data |
+| `apps/accounts/api/urls.py` | Renamed accounts store router basename to `account-store` to avoid URL name collision |
+| `apps/subscriptions/tests/test_subscriptions.py` | **NEW** — 28 tests covering store limit, subscription activation, extra store grants |
+| `docs/AUTH_FLOW.md` | **NEW** — Auth flow documentation |
+| `docs/STORE_MANAGEMENT.md` | **NEW** — Store limits and extra store process |
+| `docs/SUBSCRIPTION_SYSTEM.md` | **NEW** — Subscription lifecycle, pricing, admin panel |
+| `docs/API_REFERENCE.md` | **NEW** — Complete API endpoint reference |
+
+---
+
 ## 13. Files Changed Today
 
 | File | Change |
