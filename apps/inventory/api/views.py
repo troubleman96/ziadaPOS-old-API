@@ -504,6 +504,92 @@ class ProductViewSet(ModelViewSet):
             message=f"Bulk upload complete: {created_count} created, {len(errors)} failed.",
         )
 
+    @action(
+        detail=False, methods=["post"], url_path="bulk-create",
+        permission_classes=[IsAuthenticated, IsStoreManager],
+    )
+    def bulk_create(self, request):
+        """
+        POST /api/v1/inventory/products/bulk-create/
+
+        Accepts a JSON array of product objects (no images — use the single
+        create endpoint for products that need an image upload).
+
+        Each item is validated and created in its own atomic transaction so a
+        bad row never aborts the rest of the batch.
+
+        Request body:
+          [
+            { "name": "...", "price": 28500, "cost": 22000,
+              "sku": "...", "category_name_input": "Grocery",
+              "unit": "bag", "barcode": "...",
+              "stock": 50, "min_stock": 10, "max_stock": 100,
+              "is_active": true },
+            ...
+          ]
+
+        Response:
+          {
+            "created": N,
+            "failed": M,
+            "products": [...created product objects...],
+            "errors": [{ "index": N, "name": "...", "errors": {...} }]
+          }
+        """
+        items = request.data
+        if not isinstance(items, list):
+            return error_response("Request body must be a JSON array.", status=400)
+        if not items:
+            return error_response("No products provided.", status=400)
+        if len(items) > 100:
+            return error_response("Maximum 100 products per bulk create.", status=400)
+
+        created_count = 0
+        errors = []
+        created_products = []
+
+        for idx, item in enumerate(items):
+            data = dict(item)
+            data["store"] = str(request.user.store_id)
+
+            serializer = ProductSerializer(data=data, context={"request": request})
+            if not serializer.is_valid():
+                errors.append({
+                    "index": idx,
+                    "name": item.get("name", f"Product {idx + 1}"),
+                    "errors": serializer.errors,
+                })
+                continue
+
+            try:
+                with db_transaction.atomic():
+                    product = serializer.save()
+                    created_products.append(
+                        ProductSerializer(product, context={"request": request}).data
+                    )
+                    created_count += 1
+            except Exception as exc:
+                logger.warning("Bulk create row %d failed: %s", idx, exc)
+                errors.append({
+                    "index": idx,
+                    "name": item.get("name", f"Product {idx + 1}"),
+                    "errors": {"detail": str(exc)},
+                })
+
+        logger.info(
+            "Bulk create by user %s: %d created, %d failed.",
+            request.user.username, created_count, len(errors),
+        )
+        return success_response(
+            data={
+                "created": created_count,
+                "failed": len(errors),
+                "products": created_products,
+                "errors": errors,
+            },
+            message=f"Bulk create complete: {created_count} created, {len(errors)} failed.",
+        )
+
     @action(detail=True, methods=["get"], url_path="adjustments")
     def adjustments(self, request, pk=None):
         """
