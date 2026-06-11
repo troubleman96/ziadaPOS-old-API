@@ -227,6 +227,17 @@ class CompleteSaleSerializer(serializers.Serializer):
             raise serializers.ValidationError("Cart must contain at least one item.")
         return items
 
+    def validate(self, attrs):
+        """Credit sales require a registered customer — a walk-in has nobody to bill."""
+        if (
+            attrs.get("payment_method") == "Credit"
+            and not attrs.get("customer_id")
+        ):
+            raise serializers.ValidationError(
+                {"customer_id": "A registered customer must be selected for credit sales."}
+            )
+        return attrs
+
 
 # ── Refund ────────────────────────────────────────────────────────────────────
 
