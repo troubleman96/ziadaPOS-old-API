@@ -53,51 +53,71 @@ class TransactionSerializer(serializers.ModelSerializer):
     Includes nested line items and computed display fields.
     """
 
-    # Nested line items (all lines for this transaction)
-    lines = TransactionLineSerializer(many=True, read_only=True)
-
-    # Cashier display name
+    lines        = TransactionLineSerializer(many=True, read_only=True)
     cashier_name = serializers.SerializerMethodField()
-
-    # Computed counts
-    item_count = serializers.IntegerField(read_only=True)
-    sku_count  = serializers.IntegerField(read_only=True)
+    item_count   = serializers.IntegerField(read_only=True)
+    sku_count    = serializers.IntegerField(read_only=True)
+    credit_info  = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
         fields = [
-            # Reference
             "id", "txn_number", "store", "channel",
-
-            # Customer
             "customer", "customer_name", "customer_phone",
-
-            # Payment
             "payment_method", "payment_reference", "status",
-
-            # Amounts
             "subtotal", "discount_pct", "discount_amount",
             "tax_amount", "total", "cost_total", "profit",
-
-            # Staff
             "cashier", "cashier_name", "till_number",
-
-            # Computed
             "item_count", "sku_count",
-
-            # Lines
             "lines",
-
-            # Meta
+            "credit_info",
             "notes", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "txn_number", "created_at", "updated_at"]
 
     def get_cashier_name(self, obj):
-        """Return cashier's full name or username."""
         if obj.cashier:
             return obj.cashier.get_full_name() or obj.cashier.username
         return "Unknown"
+
+    def get_credit_info(self, obj):
+        """
+        For credit transactions: return tab balance details + payment history.
+        Returns None for non-credit transactions with no linked tab.
+        """
+        try:
+            tab = obj.credit_tab  # reverse OneToOneField
+        except Exception:
+            return None
+
+        if tab is None:
+            return None
+
+        from apps.credits.models import CreditPayment
+        payments = CreditPayment.objects.filter(
+            customer=tab.customer,
+        ).order_by("-created_at").values(
+            "amount", "method", "reference", "created_at",
+        )
+
+        return {
+            "tab_id":       str(tab.id),
+            "tab_status":   tab.status,
+            "amount":       tab.amount,
+            "amount_paid":  tab.amount_paid,
+            "balance":      tab.balance,
+            "due_date":     tab.due_date.isoformat() if tab.due_date else None,
+            "is_overdue":   tab.is_overdue,
+            "payments": [
+                {
+                    "amount":     p["amount"],
+                    "method":     p["method"],
+                    "reference":  p["reference"],
+                    "created_at": p["created_at"].isoformat(),
+                }
+                for p in payments
+            ],
+        }
 
 
 class TransactionListSerializer(serializers.ModelSerializer):

@@ -38,6 +38,8 @@ from apps.core.permissions import IsStoreCashier, IsStoreManager
 from apps.core.response import created_response, error_response, success_response
 from apps.customers.models import Customer
 
+from apps.transactions.models import Transaction as SaleTransaction
+
 from ..models import CreditMessage, CreditNote, CreditPayment, CreditTab
 from .serializers import (
     AddCreditNoteSerializer,
@@ -393,12 +395,13 @@ def _apply_payment_to_tabs(customer, amount_to_apply):
     Distribute a payment amount across open CreditTabs (oldest first).
 
     Modifies tab.amount_paid and tab.status in-place (DB updates).
+    When a tab is fully settled, also marks the linked Transaction as paid.
     Stops when the payment amount is exhausted.
     """
     open_tabs = CreditTab.objects.filter(
         customer=customer,
         status__in=[CreditTab.STATUS_OPEN, CreditTab.STATUS_PARTIAL],
-    ).order_by("created_at")  # Oldest tab first
+    ).select_related("transaction").order_by("created_at")
 
     remaining = amount_to_apply
 
@@ -412,9 +415,14 @@ def _apply_payment_to_tabs(customer, amount_to_apply):
         tab.amount_paid += apply
         remaining -= apply
 
-        # Update status based on how much has been paid
         if tab.amount_paid >= tab.amount:
             tab.status = CreditTab.STATUS_SETTLED
+            # Reflect settlement on the originating transaction
+            if tab.transaction_id:
+                SaleTransaction.objects.filter(
+                    id=tab.transaction_id,
+                    status=SaleTransaction.STATUS_CREDIT,
+                ).update(status=SaleTransaction.STATUS_PAID)
         else:
             tab.status = CreditTab.STATUS_PARTIAL
 
