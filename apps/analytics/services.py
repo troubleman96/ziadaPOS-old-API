@@ -259,6 +259,15 @@ def get_kpi_summary(store, start_date: date, end_date: date) -> dict:
             return None
         return round((current - prior) / prior * 100, 1)
 
+    # Discount aggregates — DailySummary doesn't cache these, query Transaction directly
+    disc_agg = Transaction.objects.filter(
+        store=store,
+        created_at__date__gte=start_date,
+        created_at__date__lte=end_date,
+        status__in=[Transaction.STATUS_PAID, Transaction.STATUS_CREDIT],
+        discount_amount__gt=0,
+    ).aggregate(disc_total=Sum("discount_amount"), disc_count=Count("id"))
+
     return {
         "revenue":           total_revenue,
         "profit":            total_profit,
@@ -268,6 +277,8 @@ def get_kpi_summary(store, start_date: date, end_date: date) -> dict:
         "avg_ticket":        total_revenue // transactions if transactions else 0,
         "tax_collected":     agg["tax"]     or 0,
         "refund_total":      agg["refunds"] or 0,
+        "discount_amount":   disc_agg["disc_total"] or 0,
+        "discounted_count":  disc_agg["disc_count"] or 0,
         # Period-over-period deltas
         "revenue_delta_pct":      pct_delta(total_revenue, prior_revenue),
         "transaction_delta_pct":  pct_delta(transactions, prior_txns),
