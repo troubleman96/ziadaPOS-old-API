@@ -222,6 +222,145 @@ def send_daily_sales_report(store=None) -> int:
     return sent
 
 
+# ── Scheduled report email ────────────────────────────────────────────────────
+
+def send_scheduled_report(scheduled_report) -> dict:
+    """
+    Send a scheduled report email to all recipients.
+
+    Generates the report data, builds an HTML summary email with key KPIs,
+    and attaches a CSV of the data.
+
+    Returns {"sent": int, "failed": int, "recipients": list[str]}.
+    """
+    from apps.reports.services import get_report_data, build_csv, parse_range_for_report
+
+    sr   = scheduled_report
+    store = sr.store
+    recipients = [r for r in (sr.recipients or []) if r]
+
+    if not recipients:
+        logger.warning("Scheduled report %s has no recipients — skipped.", sr.id)
+        return {"sent": 0, "failed": 0, "recipients": []}
+
+    # Resolve date range from preset
+    preset = sr.date_range_preset or "30d"
+    start, end, period_label = parse_range_for_report({"range": preset})
+
+    # Generate report data
+    try:
+        data = get_report_data(sr.report_type, store, start, end)
+    except Exception as exc:
+        logger.error("Scheduled report data generation failed for %s: %s", sr.id, exc)
+        return {"sent": 0, "failed": len(recipients), "recipients": recipients}
+
+    # Build CSV attachment
+    try:
+        csv_str, csv_filename = build_csv(sr.report_type, data)
+    except Exception:
+        csv_str, csv_filename = "", f"{sr.report_type}-report.csv"
+
+    # Build KPI summary for email body
+    report_names = {
+        "sales":     "Sales Summary",
+        "inventory": "Inventory Valuation",
+        "tax":       "Tax Statement",
+        "credit":    "Credit Aged Debtors",
+    }
+    report_name = report_names.get(sr.report_type, sr.report_type.title())
+
+    # Extract a few headline numbers depending on report type
+    highlights = []
+    try:
+        if sr.report_type == "sales":
+            s = data.get("summary", {})
+            highlights = [
+                ("Total Revenue",     _fmt_tzs(s.get("total_revenue", 0))),
+                ("Gross Profit",      _fmt_tzs(s.get("gross_profit", 0))),
+                ("Transactions",      str(s.get("transaction_count", 0))),
+                ("Avg Ticket",        _fmt_tzs(s.get("avg_ticket", 0))),
+            ]
+        elif sr.report_type == "inventory":
+            s = data.get("summary", {})
+            highlights = [
+                ("Total SKUs",        str(s.get("total_skus", 0))),
+                ("Retail Value",      _fmt_tzs(s.get("total_retail_value", 0))),
+                ("Cost Value",        _fmt_tzs(s.get("total_cost_value", 0))),
+                ("Low Stock Items",   str(s.get("low_stock_count", 0))),
+            ]
+        elif sr.report_type == "tax":
+            s = data.get("summary", {})
+            highlights = [
+                ("Gross Sales",       _fmt_tzs(s.get("gross_sales", 0))),
+                ("VAT Collected",     _fmt_tzs(s.get("tax_collected", 0))),
+                ("Net (excl. VAT)",   _fmt_tzs(s.get("net_sales_excl_tax", 0))),
+            ]
+        elif sr.report_type == "credit":
+            t = data.get("totals", {})
+            highlights = [
+                ("Total Outstanding", _fmt_tzs(t.get("total", 0))),
+                ("Customers",         str(t.get("customer_count", 0))),
+                ("Overdue Accounts",  str(t.get("overdue_count", 0))),
+            ]
+    except Exception:
+        highlights = []
+
+    rows_html = "".join(
+        f'<tr><td style="padding:8px 12px;color:#94a3b8;font-size:13px;">{lbl}</td>'
+        f'<td style="padding:8px 12px;font-family:monospace;font-size:13px;text-align:right;color:#e2e8f0;">{val}</td></tr>'
+        for lbl, val in highlights
+    )
+
+    attachment_note = (
+        f'<p style="color:#94a3b8;font-size:12px;margin:16px 0 0;">'
+        f'📎 {csv_filename} attached — open in Excel or Google Sheets.</p>'
+        if csv_str else ""
+    )
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#0f1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:540px;margin:32px auto;background:#1a1d27;border:1px solid #2a2d3a;border-radius:14px;overflow:hidden;">
+  <div style="padding:28px 28px 20px;background:linear-gradient(135deg,#1e2130,#252840);border-bottom:1px solid #2a2d3a;">
+    <div style="font-size:11px;letter-spacing:0.1em;color:#6366f1;text-transform:uppercase;margin-bottom:6px;">Ziada POS · Scheduled Report</div>
+    <h1 style="margin:0 0 4px;font-size:20px;font-weight:600;color:#e2e8f0;">{report_name}</h1>
+    <div style="font-size:13px;color:#64748b;">{store.name} &nbsp;·&nbsp; {period_label}</div>
+  </div>
+  <div style="padding:20px 28px;">
+    {'<table style="width:100%;border-collapse:collapse;background:#141720;border-radius:8px;overflow:hidden;margin-bottom:16px;"><tbody>' + rows_html + '</tbody></table>' if rows_html else ''}
+    {attachment_note}
+    <hr style="border:none;border-top:1px solid #2a2d3a;margin:20px 0 16px;"/>
+    <p style="color:#475569;font-size:11px;margin:0;">
+      Scheduled by {sr.created_by.get_full_name() or sr.created_by.email} &nbsp;·&nbsp;
+      {sr.get_frequency_display() if hasattr(sr, 'get_frequency_display') else sr.frequency.title()} report
+      &nbsp;·&nbsp; <a href="{SITE}/reports" style="color:#6366f1;text-decoration:none;">View in Ziada POS</a>
+    </p>
+  </div>
+</div>
+</body></html>"""
+
+    sent = failed = 0
+    for email in recipients:
+        try:
+            msg = EmailMultiAlternatives(
+                subject=f"[{store.name}] {report_name} — {period_label}",
+                body=f"{report_name} for {store.name}, period: {period_label}.",
+                from_email=FROM,
+                to=[email],
+            )
+            msg.attach_alternative(html, "text/html")
+            if csv_str:
+                msg.attach(csv_filename, csv_str, "text/csv")
+            msg.send(fail_silently=False)
+            logger.info("Scheduled report '%s' sent to %s.", sr.id, email)
+            sent += 1
+        except Exception as exc:
+            logger.error("Failed to send scheduled report to %s: %s", email, exc)
+            failed += 1
+
+    return {"sent": sent, "failed": failed, "recipients": recipients}
+
+
 # ── Test email ────────────────────────────────────────────────────────────────
 
 def send_test_email(to: str) -> bool:

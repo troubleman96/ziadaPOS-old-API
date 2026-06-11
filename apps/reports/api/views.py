@@ -402,3 +402,46 @@ class ScheduledReportDetailView(APIView):
         scheduled = self._get_object(request, pk)
         scheduled.delete()
         return success_response(data=None, message="Scheduled report deleted.")
+
+
+class ScheduledReportSendView(APIView):
+    """
+    POST /api/v1/reports/scheduled/{id}/send/
+
+    Immediately generates and emails the scheduled report to all recipients.
+    Updates last_sent_at and recalculates next_send_at.
+
+    Only managers/owners can trigger a manual send.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if request.user.role not in ("owner", "admin"):
+            raise PermissionDenied("Only store owners or admins can send reports.")
+
+        try:
+            scheduled = ScheduledReport.objects.get(id=pk, store=request.user.store)
+        except ScheduledReport.DoesNotExist:
+            raise NotFound("Scheduled report not found.")
+
+        from apps.notifications.emails import send_scheduled_report
+        from django.utils import timezone as tz
+
+        result = send_scheduled_report(scheduled)
+
+        # Update timestamps
+        now = tz.now()
+        scheduled.last_sent_at = now
+        scheduled.next_send_at = compute_next_send(scheduled.frequency, now)
+        scheduled.save(update_fields=["last_sent_at", "next_send_at"])
+
+        return success_response(
+            data={
+                "sent":        result["sent"],
+                "failed":      result["failed"],
+                "recipients":  result["recipients"],
+                "last_sent_at": scheduled.last_sent_at.isoformat(),
+            },
+            message=f"Report sent to {result['sent']} recipient(s).",
+        )

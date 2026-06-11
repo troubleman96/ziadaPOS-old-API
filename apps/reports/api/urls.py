@@ -25,6 +25,7 @@ from .views import (
     ReportTypesView,
     ScheduledReportDetailView,
     ScheduledReportListCreateView,
+    ScheduledReportSendView,
 )
 
 urlpatterns = [
@@ -42,4 +43,6 @@ urlpatterns = [
          ScheduledReportListCreateView.as_view(),      name="reports-scheduled"),
     path("scheduled/<uuid:pk>/",
          ScheduledReportDetailView.as_view(),          name="reports-scheduled-detail"),
+    path("scheduled/<uuid:pk>/send/",
+         ScheduledReportSendView.as_view(),            name="reports-scheduled-send"),
 ]

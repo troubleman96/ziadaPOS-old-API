@@ -452,8 +452,8 @@ class CompleteSaleView(APIView):
         discount_amount = int(subtotal * discount_pct / 100)
         taxable         = subtotal - discount_amount
 
-        # 18% VAT
-        tax_amount = int(taxable * VAT_RATE)
+        # 18% VAT (only when store is VAT-registered)
+        tax_amount = int(taxable * VAT_RATE) if getattr(store, "vat_enabled", True) else 0
         total      = taxable + tax_amount
 
         # Gross profit = total - cost - tax

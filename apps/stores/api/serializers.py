@@ -46,7 +46,7 @@ class StoreListSerializer(serializers.ModelSerializer):
             "color", "open_hours", "till_count",
 
             # Status
-            "status", "is_active",
+            "status", "is_active", "vat_enabled",
 
             # Staff
             "manager_name", "staff_count", "staff_on_duty",
@@ -120,7 +120,7 @@ class StoreWriteSerializer(serializers.ModelSerializer):
             "organisation",
             "name", "code", "area", "address",
             "phone", "email", "open_hours", "color",
-            "till_count", "status",
+            "till_count", "status", "vat_enabled",
         ]
 
     def validate_name(self, value):

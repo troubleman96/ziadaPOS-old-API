@@ -249,6 +249,11 @@ class Store(BaseModel):
         help_text="Active stores appear in the store switcher.",
     )
 
+    vat_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether this store charges VAT (18% TRA). Disable for stores not VAT-registered.",
+    )
+
     def __str__(self):
         return f"{self.organisation.name} — {self.name}"
 

@@ -65,6 +65,7 @@ class StoreSerializer(serializers.ModelSerializer):
             "id", "organisation", "organisation_name",
             "name", "code", "address", "area", "phone",
             "till_count", "is_active", "is_main_store",
+            "vat_enabled",
             "staff_count", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
