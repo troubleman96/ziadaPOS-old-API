@@ -1067,30 +1067,21 @@ def get_dashboard_data(store) -> dict:
         )
 
     # ── Outstanding Credit (quick KPI) ────────────────────────────────────────
-    try:
-        from apps.credits.models import CreditTab
-        open_tabs = CreditTab.objects.filter(
-            store=store,
-            status__in=[CreditTab.STATUS_OPEN, CreditTab.STATUS_PARTIAL],
-        )
-        cred_agg = open_tabs.aggregate(
-            total=Sum(
-                models.ExpressionWrapper(
-                    models.F("amount") - models.F("amount_paid"),
-                    output_field=models.IntegerField(),
-                )
-            ),
-            customers=Count("customer_id", distinct=True),
-        )
-        from django.utils import timezone as tz
-        overdue = open_tabs.filter(due_date__lt=tz.now().date()).count()
-        credit_kpi = {
-            "total":         cred_agg["total"]     or 0,
-            "customer_count":cred_agg["customers"] or 0,
-            "overdue_count": overdue,
-        }
-    except Exception:
-        credit_kpi = {"total": 0, "customer_count": 0, "overdue_count": 0}
+    from apps.credits.models import CreditTab
+    from django.utils import timezone as tz
+    open_tabs = CreditTab.objects.filter(
+        store=store,
+        status__in=[CreditTab.STATUS_OPEN, CreditTab.STATUS_PARTIAL],
+    )
+    amt_agg = open_tabs.aggregate(total_amount=Sum("amount"), total_paid=Sum("amount_paid"))
+    cred_total = (amt_agg["total_amount"] or 0) - (amt_agg["total_paid"] or 0)
+    cust_count = open_tabs.aggregate(c=Count("customer_id", distinct=True))["c"] or 0
+    overdue_count = open_tabs.filter(due_date__lt=tz.now().date()).count()
+    credit_kpi = {
+        "total":          cred_total,
+        "customer_count": cust_count,
+        "overdue_count":  overdue_count,
+    }
 
     return {
         "kpis_today":    kpis_today,
@@ -1100,7 +1091,3 @@ def get_dashboard_data(store) -> dict:
         "low_stock":     low_stock,
         "credit_kpi":    credit_kpi,
     }
-
-
-# ── Import for F/ExpressionWrapper ──────────────────────────────────────────
-from django.db import models

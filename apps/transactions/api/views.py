@@ -18,6 +18,7 @@ The core POS flow:
 """
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -542,7 +543,11 @@ class CompleteSaleView(APIView):
                 amount=total,
                 cashier=cashier,
                 till_number=data.get("till_number", "Till #1"),
+                due_date=timezone.now().date() + timedelta(days=30),
             )
+            # Keep cached open_credit in sync so credits page shows this customer
+            customer_obj.open_credit += total
+            customer_obj.save(update_fields=["open_credit", "updated_at"])
 
         return transaction
 
