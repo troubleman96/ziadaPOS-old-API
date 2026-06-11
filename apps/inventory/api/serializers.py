@@ -11,6 +11,8 @@ Category auto-create:
   categories through a separate workflow.
 """
 
+import uuid
+
 from rest_framework import serializers
 
 from ..models import Category, Product, StockAdjustment
@@ -164,6 +166,10 @@ class ProductSerializer(serializers.ModelSerializer):
             "id", "margin_pct", "stock_status", "days_of_stock",
             "image_url", "created_at", "updated_at",
         ]
+        extra_kwargs = {
+            # SKU is optional on input — auto-generated when blank
+            "sku": {"required": False, "allow_blank": True, "default": ""},
+        }
 
     # ── Validation ────────────────────────────────────────────────────────────
 
@@ -178,6 +184,10 @@ class ProductSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        # ── SKU auto-generate ─────────────────────────────────────────────────
+        if not attrs.get("sku", "").strip():
+            attrs["sku"] = f"SKU-{uuid.uuid4().hex[:8].upper()}"
+
         # ── Category auto-create ──────────────────────────────────────────────
         # Pull out the write-only input field before saving
         category_name_input = attrs.pop("category_name_input", None)
