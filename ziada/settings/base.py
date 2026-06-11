@@ -58,6 +58,8 @@ THIRD_PARTY_APPS = [
     "django_filters",
     # Developer utilities (shell_plus, etc.)
     "django_extensions",
+    # S3-compatible object storage (MinIO for product images, etc.)
+    "storages",
 ]
 
 LOCAL_APPS = [
@@ -198,8 +200,44 @@ USE_TZ = True  # All DateTimeField values are stored as UTC in the DB
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+# ── Object Storage (MinIO) ────────────────────────────────────────────────────
+# When USE_MINIO=True, uploaded files (product images, etc.) are stored in the
+# MinIO bucket instead of the local filesystem.  MinIO speaks the S3 protocol,
+# so django-storages / boto3 handles it natively.
+#
+# Server-side requirement: the Nginx config on media.camelcreatives.com must
+# proxy S3 API requests (port 9000) — see deploy.md § MinIO.
+USE_MINIO = config("USE_MINIO", cast=bool, default=False)
+
+if USE_MINIO:
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "OPTIONS": {
+                "bucket_name":       config("MINIO_BUCKET_NAME", default="ziada"),
+                "access_key":        config("MINIO_ACCESS_KEY"),
+                "secret_key":        config("MINIO_SECRET_KEY"),
+                "endpoint_url":      config("MINIO_ENDPOINT_URL"),
+                "region_name":       config("MINIO_REGION", default="us-east-1"),
+                "addressing_style":  "path",   # MinIO requires path-style (not virtual-hosted)
+                "default_acl":       "public-read",
+                "querystring_auth":  False,    # Public bucket — no signed URLs
+                "file_overwrite":    False,    # Preserve original filenames with uuid suffix
+                "object_parameters": {"CacheControl": "max-age=86400"},
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+    # Media files are served directly from MinIO (path-style URL)
+    _bucket   = config("MINIO_BUCKET_NAME", default="ziada")
+    _endpoint = config("MINIO_ENDPOINT_URL", default="https://media.camelcreatives.com")
+    MEDIA_URL  = f"{_endpoint.rstrip('/')}/{_bucket}/"
+    MEDIA_ROOT = ""   # Not used when MinIO is active
+else:
+    MEDIA_URL  = "/media/"
+    MEDIA_ROOT = BASE_DIR / "media"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default primary key type

@@ -33,6 +33,10 @@ django-filter==24.2           # DRF filter backend (querystring filtering)
 Pillow==10.3.0                # Image handling (product images later)
 django-extensions==3.2.3      # shell_plus, RunScript, etc.
 
+# ── Object Storage (MinIO / S3-compatible) ────────────────────────────────────
+django-storages[boto3]==1.14.6  # S3-compatible storage backend (works with MinIO)
+boto3==1.43.27                  # AWS SDK — boto3 speaks the S3 protocol that MinIO implements
+
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest==8.2.2
 pytest-django==4.8.0          # Django integration for pytest
