@@ -23,7 +23,8 @@ Key functions:
 from collections import defaultdict
 from datetime import date, timedelta
 
-from django.db.models import Count, Max, Min, Sum
+from django.db import models
+from django.db.models import Count, Max, Min, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth
 from django.db.models.functions import ExtractHour
 
@@ -1040,6 +1041,9 @@ def get_dashboard_data(store) -> dict:
         .values("local_hour")
         .annotate(
             revenue=Sum("total"),
+            profit=Sum("profit"),
+            discount_amount=Sum("discount_amount"),
+            credit_amount=Sum("total", filter=Q(status=Transaction.STATUS_CREDIT)),
             txn_count=Count("id"),
         )
         .order_by("local_hour")
@@ -1048,10 +1052,13 @@ def get_dashboard_data(store) -> dict:
 
     hourly_today = [
         {
-            "hour":      hr,
-            "label":     f"{hr:02d}:00",
-            "revenue":   (hour_map.get(hr, {}).get("revenue")   or 0),
-            "txn_count": (hour_map.get(hr, {}).get("txn_count") or 0),
+            "hour":            hr,
+            "label":           f"{hr:02d}:00",
+            "revenue":         (hour_map.get(hr, {}).get("revenue")         or 0),
+            "profit":          (hour_map.get(hr, {}).get("profit")          or 0),
+            "discount_amount": (hour_map.get(hr, {}).get("discount_amount") or 0),
+            "credit_amount":   (hour_map.get(hr, {}).get("credit_amount")   or 0),
+            "txn_count":       (hour_map.get(hr, {}).get("txn_count")       or 0),
         }
         for hr in range(7, 21)
     ]

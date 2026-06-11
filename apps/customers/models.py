@@ -131,6 +131,13 @@ class Customer(BaseModel):
         help_text="Current outstanding credit balance (TZS, cached).",
     )
 
+    # Maximum credit allowed for this customer (TZS). Null = no limit.
+    credit_limit = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum credit allowed (TZS). Null means no limit.",
+    )
+
     # ── Display ───────────────────────────────────────────────────────────────
 
     # Hue (0-360) for the avatar gradient — set randomly on creation.

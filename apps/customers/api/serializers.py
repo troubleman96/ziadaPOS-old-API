@@ -45,6 +45,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             # Stats (read-only cached values)
             "total_spent", "last_visit", "avg_ticket",
             "open_credit", "has_open_credit",
+            "credit_limit",
 
             # Meta
             "notes", "is_active",
@@ -73,7 +74,7 @@ class CustomerListSerializer(serializers.ModelSerializer):
             "id", "name", "phone",
             "avatar_hue", "initials", "segment",
             "total_spent", "last_visit", "avg_ticket",
-            "open_credit", "has_open_credit",
+            "open_credit", "has_open_credit", "credit_limit",
             "is_active", "created_at",
         ]
 
@@ -90,7 +91,7 @@ class CustomerCreateSerializer(serializers.ModelSerializer):
         model = Customer
         fields = [
             "name", "phone", "email",
-            "segment", "avatar_hue", "notes",
+            "segment", "avatar_hue", "notes", "credit_limit",
         ]
 
     def validate_phone(self, value):
@@ -128,7 +129,7 @@ class CustomerUpdateSerializer(serializers.ModelSerializer):
         model = Customer
         fields = [
             "name", "phone", "email",
-            "segment", "avatar_hue", "notes", "is_active",
+            "segment", "avatar_hue", "notes", "is_active", "credit_limit",
         ]
 
 
