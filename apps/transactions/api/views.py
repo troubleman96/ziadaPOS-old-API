@@ -475,6 +475,30 @@ class CompleteSaleView(APIView):
                 # If customer not found, proceed as walk-in (don't fail the sale)
                 logger.warning("Customer %s not found — proceeding as walk-in.", customer_id)
 
+        # ── Step 3b: Enforce credit limit before anything permanent ────────────
+        if (
+            customer_obj
+            and data["payment_method"] == Transaction.METHOD_CREDIT
+            and customer_obj.credit_limit is not None
+        ):
+            projected = customer_obj.open_credit + total
+            if projected > customer_obj.credit_limit:
+                raise ValueError(
+                    f"Credit limit exceeded. Allowed: {customer_obj.credit_limit:,} TZS, "
+                    f"projected balance: {projected:,} TZS."
+                )
+
+        # ── Step 3c: Guard against negative stock ───────────────────────────────
+        insufficient = [
+            line["name"]
+            for line in line_data
+            if line["product"].stock < line["qty"]
+        ]
+        if insufficient:
+            raise ValueError(
+                f"Insufficient stock for: {', '.join(insufficient)}"
+            )
+
         # ── Step 4: Generate sequential TXN number ─────────────────────────────
         txn_number = self._generate_txn_number(store)
 
@@ -556,19 +580,28 @@ class CompleteSaleView(APIView):
         Generate the next sequential TXN number for this store.
         Format: TXN-NNNN (e.g. TXN-2043)
 
-        Uses DB MAX to avoid race conditions (within the atomic transaction).
+        Uses TxnSequence (a single-row counter per store) to prevent race
+        conditions on parallel tills.
         """
-        last = Transaction.objects.filter(
+        from django.db.models import F
+        seq, _ = TxnSequence.objects.select_for_update().get_or_create(
             store=store,
-            txn_number__startswith="TXN-",
-        ).order_by("-txn_number").first()
-
-        if last:
-            try:
-                last_num = int(last.txn_number.replace("TXN-", ""))
-                return f"TXN-{last_num + 1}"
-            except ValueError:
-                pass
-
-        # Start at TXN-1001 for new stores
-        return "TXN-1001"
+            defaults={"last_number": 1000},
+        )
+        # If the DB row was just created, seed it from any existing TXN numbers
+        # so we never collide with pre-seeded transactions.
+        if seq.last_number == 1000:
+            last = Transaction.objects.filter(
+                store=store,
+                txn_number__startswith="TXN-",
+            ).order_by("-txn_number").first()
+            if last:
+                try:
+                    seq.last_number = max(seq.last_number, int(last.txn_number.replace("TXN-", "")))
+                except ValueError:
+                    pass
+        # Increment and return
+        seq.last_number = F("last_number") + 1
+        seq.save(update_fields=["last_number"])
+        seq.refresh_from_db()
+        return f"TXN-{seq.last_number}"

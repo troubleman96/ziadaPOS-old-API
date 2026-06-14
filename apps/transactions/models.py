@@ -327,3 +327,32 @@ class TransactionLine(BaseModel):
         verbose_name = "Transaction Line"
         verbose_name_plural = "Transaction Lines"
         ordering = ["created_at"]
+
+
+# ── Transaction Sequence ───────────────────────────────────────────────────────
+
+class TxnSequence(BaseModel):
+    """
+    Counter that guarantees unique sequential TXN numbers per store.
+
+    Instead of reading MAX(txn_number) — which races on parallel tills —
+    we lock a single row for the store and increment it atomically.
+    """
+    store = models.OneToOneField(
+        "accounts.Store",
+        on_delete=models.CASCADE,
+        related_name="txn_sequence",
+        help_text="Store this counter belongs to.",
+    )
+    last_number = models.PositiveIntegerField(
+        default=1000,
+        help_text="Last used TXN number for this store.",
+    )
+
+    class Meta:
+        db_table = "transactions_txnsequence"
+        verbose_name = "Transaction Sequence"
+        verbose_name_plural = "Transaction Sequences"
+
+    def __str__(self):
+        return f"TXN-seq for {self.store.name} (last={self.last_number})"
