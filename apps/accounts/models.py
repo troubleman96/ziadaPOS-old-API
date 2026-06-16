@@ -412,6 +412,19 @@ class User(AbstractUser, BaseModel):
         help_text="True after the owner confirms their email address.",
     )
 
+    # ── Password Reset Token ───────────────────────────────────────────────────
+    # Used for the forgot password flow — stores a one-time token with expiry.
+    password_reset_token = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="One-time token for password reset.",
+    )
+    password_reset_token_expires = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Expiry time for the password reset token.",
+    )
+
     # ── Override AbstractUser PK conflict with BaseModel ──────────────────────
     id         = models.AutoField(primary_key=True)
     created_at = models.DateTimeField(auto_now_add=True)

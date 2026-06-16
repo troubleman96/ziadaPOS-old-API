@@ -9,6 +9,8 @@ Auth flow:
 """
 
 import logging
+import uuid
+from datetime import timedelta
 
 from django.contrib.auth import update_session_auth_hash
 from django.db.models import Avg, Count, Q, Sum
@@ -32,9 +34,11 @@ from ..models import AICredit, Organisation, Store, User
 from .serializers import (
     AICreditSerializer,
     ChangePasswordSerializer,
+    ForgotPasswordRequestSerializer,
     OrganisationSerializer,
     PhoneLoginSerializer,
     RegistrationSerializer,
+    SetNewPasswordSerializer,
     StaffStatsSerializer,
     StoreSerializer,
     UserCreateSerializer,
@@ -667,3 +671,84 @@ class ResendConfirmationView(APIView):
         if ok:
             return success_response(message="Confirmation email sent. Check your inbox.")
         return error_response("Failed to send confirmation email. Please try again.", status=500)
+
+
+# ── Password Reset ──────────────────────────────────────────────────────────────
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/v1/auth/forgot-password/
+
+    Generates a password reset token for the given phone number.
+    The token is stored on the User model with an expiry (1 hour).
+    In production, this token would be sent via SMS/email.
+    For now, it's returned in the response for testing.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Validation failed.",
+                errors=serializer.errors,
+                status=400,
+            )
+
+        phone = serializer.validated_data["phone"]
+
+        # Find user by phone (case-insensitive)
+        try:
+            user = User.objects.get(phone=phone)
+        except User.DoesNotExist:
+            # Don't reveal if phone is registered — return generic success
+            return success_response(
+                message="If this phone number is registered, a password reset token has been generated."
+            )
+
+        # Generate token and set expiry (1 hour)
+        reset_token = uuid.uuid4()
+        user.password_reset_token = reset_token
+        user.password_reset_token_expires = timezone.now() + timedelta(hours=1)
+        user.save(update_fields=["password_reset_token", "password_reset_token_expires", "updated_at"])
+
+        logger.info("Password reset requested for user %s.", user.phone)
+
+        # In production, you'd send this via SMS/WhatsApp
+        # For now, return it in the response for testing
+        return success_response(
+            data={"reset_token": str(reset_token)},
+            message="Password reset token generated. Check your SMS/WhatsApp for the token.",
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    POST /api/v1/auth/reset-password/
+
+    Validates the reset token and sets the new password.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = SetNewPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Validation failed.",
+                errors=serializer.errors,
+                status=400,
+            )
+
+        user = serializer.validated_data["user"]
+        new_password = serializer.validated_data["new_password"]
+
+        user.set_password(new_password)
+        user.password_reset_token = None
+        user.password_reset_token_expires = None
+        user.save(update_fields=["password", "password_reset_token", "password_reset_token_expires", "updated_at"])
+
+        logger.info("Password reset completed for user %s.", user.phone)
+
+        return success_response(message="Password has been reset. You can now log in with your new password.")

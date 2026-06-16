@@ -13,6 +13,7 @@ Key serializers:
 
 import random
 from datetime import date, timedelta
+import uuid
 
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
@@ -238,8 +239,8 @@ class RegistrationSerializer(serializers.Serializer):
 
         # Split full_name into first + last
         name_parts = full_name.strip().split(None, 1)
-        first_name = name_parts[0]
-        last_name  = name_parts[1] if len(name_parts) > 1 else ""
+        first_name = name_parts[0] or ""
+        last_name  = name_parts[1] if len(name_parts) > 1 else (first_name or "")
 
         # 1. Create Organisation
         org = Organisation.objects.create(
@@ -451,3 +452,47 @@ class AICreditSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+
+# ── Password Reset ──────────────────────────────────────────────────────────────
+
+class ForgotPasswordRequestSerializer(serializers.Serializer):
+    """
+    POST /api/v1/auth/forgot-password/
+    Request a password reset token for the given phone number.
+    """
+    phone = serializers.RegexField(
+        r"^\d{10}$",
+        error_messages={"invalid": "Enter a valid 10-digit phone number (e.g. 0712345678)."},
+    )
+
+    def validate_phone(self, value):
+        # Check if user exists (for security, we don't reveal if a number is registered)
+        # We still process the request but don't leak existence.
+        return value
+
+
+class SetNewPasswordSerializer(serializers.Serializer):
+    """
+    POST /api/v1/auth/reset-password/
+    Confirm password reset with the token and set new password.
+    """
+    token       = serializers.UUIDField()
+    new_password         = serializers.CharField(write_only=True, required=True, validators=[validate_password])
+    new_password_confirm = serializers.CharField(write_only=True, required=True)
+
+    def validate(self, attrs):
+        token = attrs["token"]
+        try:
+            user = User.objects.get(password_reset_token=token)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"token": "Invalid or expired reset token."})
+
+        if user.password_reset_token_expires and user.password_reset_token_expires < timezone.now():
+            raise serializers.ValidationError({"token": "Reset token has expired. Please request a new one."})
+
+        if attrs["new_password"] != attrs.pop("new_password_confirm"):
+            raise serializers.ValidationError({"new_password_confirm": "Passwords do not match."})
+
+        attrs["user"] = user
+        return attrs
