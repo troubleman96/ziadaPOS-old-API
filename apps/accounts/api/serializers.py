@@ -37,6 +37,14 @@ class OrganisationSerializer(serializers.ModelSerializer):
 
     store_count = serializers.SerializerMethodField()
 
+    # The raw key is write-only — PATCH with it to set/replace, omit to leave
+    # unchanged. Reads only ever expose the masked form below.
+    sendafrica_api_key = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=True,
+    )
+    sendafrica_api_key_masked = serializers.SerializerMethodField()
+    sms_configured = serializers.BooleanField(read_only=True)
+
     class Meta:
         model  = Organisation
         fields = [
@@ -44,12 +52,17 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "business_type", "region",
             "country", "currency", "plan", "max_stores",
             "ai_credits_monthly", "trial_ends_at",
+            "sendafrica_api_key", "sendafrica_api_key_masked", "sms_sender_id", "sms_configured",
             "store_count", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at", "max_stores"]
 
     def get_store_count(self, obj):
         return obj.stores.filter(is_active=True).count()
+
+    def get_sendafrica_api_key_masked(self, obj):
+        key = obj.sendafrica_api_key
+        return f"SA-••••{key[-4:]}" if key else ""
 
 
 # ── Store ─────────────────────────────────────────────────────────────────────

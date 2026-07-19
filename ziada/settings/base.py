@@ -94,6 +94,8 @@ LOCAL_APPS = [
     "apps.subscriptions.apps.SubscriptionsConfig",
     # API request tracking and admin dashboard analytics
     "apps.tracking.apps.TrackingConfig",
+    # Business expense tracking
+    "apps.expenses.apps.ExpensesConfig",
     # Store reviews — star ratings shown on landing page
     "apps.reviews.apps.ReviewsConfig",
     # Email notifications: welcome, confirmation, daily sales report

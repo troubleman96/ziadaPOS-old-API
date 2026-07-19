@@ -16,6 +16,7 @@ Endpoints:
   PATCH  /api/v1/customers/{id}/    → update contact info / segment
   DELETE /api/v1/customers/{id}/    → soft-delete (is_active=False)
   GET    /api/v1/customers/summary/ → KPI aggregate stats
+  POST   /api/v1/customers/{id}/send-sms/ → send an ad-hoc SMS via SendAfrica
 """
 
 import logging
@@ -34,6 +35,7 @@ from .serializers import (
     CustomerListSerializer,
     CustomerSerializer,
     CustomerUpdateSerializer,
+    SendCustomerSmsSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -267,3 +269,38 @@ class CustomerViewSet(ModelViewSet):
             "by_segment":            by_segment,
         }
         return success_response(data=data, message="Customer summary.")
+
+    # ── Send SMS ─────────────────────────────────────────────────────────────
+
+    @action(detail=True, methods=["post"], url_path="send-sms")
+    def send_sms(self, request, pk=None):
+        """
+        POST /api/v1/customers/{id}/send-sms/
+
+        Sends an ad-hoc SMS to this customer via SendAfrica (not tied to
+        credit reminders — for the customer detail page's "Message" action).
+        Requires the organisation to have a SendAfrica API key configured
+        in Settings → Integrations.
+        """
+        from apps.notifications.sms import SmsError, send_sms as send_sms_via_provider
+
+        customer = self.get_object()
+
+        serializer = SendCustomerSmsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors)
+
+        try:
+            result = send_sms_via_provider(
+                request.user.get_organisation,
+                customer.phone,
+                serializer.validated_data["message"],
+            )
+        except SmsError as exc:
+            return error_response(str(exc), status=400, errors={"code": exc.code})
+
+        logger.info(
+            "User %s sent SMS to customer %s (%s), message_id=%s",
+            request.user.username, customer.name, customer.id, result.get("message_id"),
+        )
+        return success_response(data=result, message="SMS sent.")

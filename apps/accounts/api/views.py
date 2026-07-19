@@ -581,6 +581,31 @@ class OrganisationView(APIView):
         return success_response(data=serializer.data, message="Organisation updated.")
 
 
+class OrganisationSmsBalanceView(APIView):
+    """
+    GET /api/v1/accounts/organisation/sms-balance/
+
+    Checks the SendAfrica credit balance for the org's configured API key.
+    Used by Settings → Integrations to show a live "connected" status.
+    """
+
+    permission_classes = [IsAuthenticated, IsOwner]
+
+    def get(self, request):
+        from apps.notifications.sms import SmsError, check_balance
+
+        org = request.user.get_organisation
+        if not org:
+            return error_response("No organisation found for this user.", status=404)
+
+        try:
+            result = check_balance(org)
+        except SmsError as exc:
+            return error_response(str(exc), status=400, errors={"code": exc.code})
+
+        return success_response(data=result, message="SMS balance retrieved.")
+
+
 # ── AI Credits ────────────────────────────────────────────────────────────────
 
 class AICreditView(APIView):

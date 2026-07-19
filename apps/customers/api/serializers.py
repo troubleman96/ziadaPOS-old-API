@@ -144,3 +144,9 @@ class CustomerMinimalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
         fields = ["id", "name", "phone", "avatar_hue", "initials", "segment"]
+
+
+class SendCustomerSmsSerializer(serializers.Serializer):
+    """Input for POST /customers/{id}/send-sms/ — an ad-hoc SMS, unrelated to credit."""
+
+    message = serializers.CharField(max_length=640, trim_whitespace=True)

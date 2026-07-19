@@ -457,15 +457,16 @@ class SendReminderView(APIView):
     Logs a communication (WhatsApp, call, SMS) for a customer's credit.
     Also used by the AI to store auto-generated reminder messages.
 
-    Note: This endpoint logs the message; actual WhatsApp sending is
-    handled by a separate WhatsApp Business API integration (future scope).
-    For MVP, the message is stored and the frontend opens the WhatsApp deep link.
+    When kind='sms' and direction='out', this actually sends the SMS via
+    SendAfrica (apps/notifications/sms.py) using the organisation's configured
+    API key, in addition to logging the CreditMessage. WhatsApp/call are still
+    logged only — the frontend handles WhatsApp via a deep link.
     """
 
     permission_classes = [IsAuthenticated, IsStoreCashier]
 
     def post(self, request, customer_id):
-        """Log a message/reminder for a customer."""
+        """Log a message/reminder for a customer, sending it for real if kind='sms'."""
         customer, err = _get_customer_or_404(customer_id, request.user.store)
         if err:
             return err
@@ -479,6 +480,16 @@ class SendReminderView(APIView):
             request.user.get_full_name() or request.user.username
         )
 
+        sms_result = None
+        sms_error  = None
+        if data["kind"] == CreditMessage.KIND_SMS and data["direction"] == CreditMessage.DIRECTION_OUT:
+            from apps.notifications.sms import SmsError, send_sms
+
+            try:
+                sms_result = send_sms(request.user.get_organisation, customer.phone, data["body"])
+            except SmsError as exc:
+                sms_error = str(exc)
+
         message = CreditMessage.objects.create(
             customer=customer,
             store=request.user.store,
@@ -489,9 +500,19 @@ class SendReminderView(APIView):
             sent_by=request.user,
         )
 
+        if sms_error:
+            return created_response(
+                data={**CreditMessageSerializer(message).data, "sms_sent": False, "sms_error": sms_error},
+                message=f"Message logged, but the SMS was not sent: {sms_error}",
+            )
+
+        payload = CreditMessageSerializer(message).data
+        if sms_result:
+            payload.update(sms_sent=True, sms_credits_used=sms_result.get("credits_used"))
+
         return created_response(
-            data=CreditMessageSerializer(message).data,
-            message="Message logged.",
+            data=payload,
+            message="SMS sent." if sms_result else "Message logged.",
         )
 
 

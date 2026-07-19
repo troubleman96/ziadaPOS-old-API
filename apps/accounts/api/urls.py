@@ -14,6 +14,7 @@ Endpoints:
   GET/POST    /api/v1/accounts/stores/                 → list / create stores
   GET/PATCH   /api/v1/accounts/stores/{id}/            → store detail / update
   GET/PATCH   /api/v1/accounts/organisation/           → org settings
+  GET         /api/v1/accounts/organisation/sms-balance/ → SendAfrica SMS credit balance
   GET         /api/v1/accounts/ai-credits/             → AI credit usage (sidenav)
 """
 
@@ -24,6 +25,7 @@ from .views import (
     AICreditView,
     ChangePasswordView,
     MeView,
+    OrganisationSmsBalanceView,
     OrganisationView,
     StoreViewSet,
     UserViewSet,
@@ -38,6 +40,7 @@ urlpatterns = [
     path("me/",                 MeView.as_view(),             name="me"),
     path("me/change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("organisation/",       OrganisationView.as_view(),   name="organisation"),
+    path("organisation/sms-balance/", OrganisationSmsBalanceView.as_view(), name="organisation-sms-balance"),
     path("ai-credits/",         AICreditView.as_view(),       name="ai-credits"),
     path("", include(router.urls)),
 ]

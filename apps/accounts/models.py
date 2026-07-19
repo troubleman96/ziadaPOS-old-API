@@ -127,8 +127,27 @@ class Organisation(BaseModel):
         help_text="Trial expiry datetime (set on registration, null after upgrade).",
     )
 
+    # ── SendAfrica SMS integration ─────────────────────────────────────────────
+    # Pasted by the owner in Settings → Integrations. Used for credit reminders
+    # and ad-hoc customer SMS. See apps/notifications/sms.py.
+    sendafrica_api_key = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="SendAfrica API key (starts with 'SA-'). Pasted by the owner in Settings → Integrations.",
+    )
+
+    sms_sender_id = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Approved custom SMS sender ID. Falls back to 'SendAfrika' if unset or unapproved.",
+    )
+
     def __str__(self):
         return self.name
+
+    @property
+    def sms_configured(self):
+        return bool(self.sendafrica_api_key)
 
     @property
     def active_subscription(self):
