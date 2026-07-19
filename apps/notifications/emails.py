@@ -305,39 +305,17 @@ def send_scheduled_report(scheduled_report) -> dict:
     except Exception:
         highlights = []
 
-    rows_html = "".join(
-        f'<tr><td style="padding:8px 12px;color:#94a3b8;font-size:13px;">{lbl}</td>'
-        f'<td style="padding:8px 12px;font-family:monospace;font-size:13px;text-align:right;color:#e2e8f0;">{val}</td></tr>'
-        for lbl, val in highlights
-    )
-
-    attachment_note = (
-        f'<p style="color:#94a3b8;font-size:12px;margin:16px 0 0;">'
-        f'📎 {csv_filename} attached — open in Excel or Google Sheets.</p>'
-        if csv_str else ""
-    )
-
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#0f1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-<div style="max-width:540px;margin:32px auto;background:#1a1d27;border:1px solid #2a2d3a;border-radius:14px;overflow:hidden;">
-  <div style="padding:28px 28px 20px;background:linear-gradient(135deg,#1e2130,#252840);border-bottom:1px solid #2a2d3a;">
-    <div style="font-size:11px;letter-spacing:0.1em;color:#6366f1;text-transform:uppercase;margin-bottom:6px;">Ziada POS · Scheduled Report</div>
-    <h1 style="margin:0 0 4px;font-size:20px;font-weight:600;color:#e2e8f0;">{report_name}</h1>
-    <div style="font-size:13px;color:#64748b;">{store.name} &nbsp;·&nbsp; {period_label}</div>
-  </div>
-  <div style="padding:20px 28px;">
-    {'<table style="width:100%;border-collapse:collapse;background:#141720;border-radius:8px;overflow:hidden;margin-bottom:16px;"><tbody>' + rows_html + '</tbody></table>' if rows_html else ''}
-    {attachment_note}
-    <hr style="border:none;border-top:1px solid #2a2d3a;margin:20px 0 16px;"/>
-    <p style="color:#475569;font-size:11px;margin:0;">
-      Scheduled by {sr.created_by.get_full_name() or sr.created_by.email} &nbsp;·&nbsp;
-      {sr.get_frequency_display() if hasattr(sr, 'get_frequency_display') else sr.frequency.title()} report
-      &nbsp;·&nbsp; <a href="{SITE}/reports" style="color:#6366f1;text-decoration:none;">View in Ziada POS</a>
-    </p>
-  </div>
-</div>
-</body></html>"""
+    ctx = {
+        "report_name":    report_name,
+        "store_name":     store.name,
+        "period_label":   period_label,
+        "highlights":     highlights,
+        "csv_filename":   csv_filename if csv_str else "",
+        "created_by_name": sr.created_by.get_full_name() or sr.created_by.email,
+        "frequency_label": sr.get_frequency_display() if hasattr(sr, 'get_frequency_display') else sr.frequency.title(),
+        "site_url":       SITE,
+    }
+    html = render_to_string("emails/scheduled_report.html", ctx)
 
     sent = failed = 0
     for email in recipients:
@@ -367,26 +345,10 @@ def send_test_email(to: str) -> bool:
     """
     Send a simple test email to verify ZohoMail SMTP is correctly configured.
     """
-    html = """
-    <!DOCTYPE html>
-    <html><head><meta charset="UTF-8" /></head>
-    <body style="background:#0f1117;font-family:sans-serif;color:#e2e8f0;padding:40px;">
-      <div style="max-width:480px;margin:0 auto;background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:32px;">
-        <div style="font-size:28px;margin-bottom:16px;">✅</div>
-        <h2 style="margin:0 0 10px;color:#e2e8f0;">ZohoMail SMTP is working!</h2>
-        <p style="color:#94a3b8;font-size:14px;line-height:1.65;margin:0 0 20px;">
-          This is a test email from <strong style="color:#6366f1">Ziada POS</strong>.<br />
-          Your email notifications are configured and ready to send.
-        </p>
-        <hr style="border:none;border-top:1px solid #2a2d3a;margin:20px 0;" />
-        <p style="color:#475569;font-size:12px;margin:0;">
-          Sent via <code style="color:#94a3b8;">smtp.zoho.com</code> from <code style="color:#94a3b8;">noreply@ziadapos.com</code>
-        </p>
-      </div>
-    </body></html>
-    """
+    ctx = {"site_url": SITE}
+    html = render_to_string("emails/test_email.html", ctx)
     return _send(
-        subject="✅ Ziada POS — SMTP test successful",
+        subject="Ziada POS — SMTP test successful",
         to=to,
         html=html,
     )

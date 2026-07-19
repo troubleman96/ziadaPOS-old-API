@@ -1,0 +1,40 @@
+{% extends "emails/base_email.html" %}
+
+{% block title %}{{ report_name }} — {{ store_name }}{% endblock %}
+
+{% block preview_text %}{{ report_name }} for {{ store_name }} — {{ period_label }}{% endblock %}
+
+{% block header %}
+<tr><td style="padding:28px 28px 20px;background:linear-gradient(135deg,#1e2130,#252840);border-bottom:1px solid #2a2d3a;">
+  <div style="font-size:11px;letter-spacing:0.1em;color:#6366f1;text-transform:uppercase;margin-bottom:6px;">Ziada POS &middot; Scheduled Report</div>
+  <div style="font-size:20px;font-weight:600;color:#e2e8f0;margin:0 0 4px;">{{ report_name }}</div>
+  <div style="font-size:13px;color:#64748b;">{{ store_name }} &middot; {{ period_label }}</div>
+</td></tr>
+{% endblock %}
+
+{% block content %}
+<tr><td style="padding:20px 28px;">
+  {% if highlights %}
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#141720;border-radius:8px;overflow:hidden;margin-bottom:16px;">
+    {% for label, value in highlights %}
+    <tr>
+      <td style="padding:8px 12px;color:#94a3b8;font-size:13px;border-bottom:1px solid #1e2130;">{{ label }}</td>
+      <td align="right" style="padding:8px 12px;font-family:monospace;font-size:13px;color:#e2e8f0;border-bottom:1px solid #1e2130;">{{ value }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if csv_filename %}
+  <p style="color:#94a3b8;font-size:12px;margin:16px 0 0;">&#128206; {{ csv_filename }} attached &mdash; open in Excel or Google Sheets.</p>
+  {% endif %}
+
+  <hr style="border:none;border-top:1px solid #2a2d3a;margin:20px 0 16px;" />
+
+  <p style="color:#475569;font-size:11px;margin:0;">
+    Scheduled by {{ created_by_name }} &middot;
+    {{ frequency_label }} report &middot;
+    <a href="{{ site_url }}/reports" style="color:#6366f1;text-decoration:none;">View in Ziada POS</a>
+  </p>
+</td></tr>
+{% endblock %}

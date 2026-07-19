@@ -1,166 +1,151 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Daily sales report — {{ store_name }}</title>
-  <style>
-    body { margin:0; padding:0; background:#0f1117; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:#e2e8f0; }
-    .wrap { max-width:580px; margin:32px auto; padding:0 16px; }
-    .card { background:#1a1d27; border:1px solid #2a2d3a; border-radius:12px; overflow:hidden; }
-    .header { padding:22px 28px; background:#13151f; border-bottom:1px solid #2a2d3a; display:flex; align-items:center; justify-content:space-between; }
-    .brand { font-size:15px; font-weight:600; color:#e2e8f0; display:flex; align-items:center; gap:8px; }
-    .logo-mark { width:28px; height:28px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border-radius:6px; display:inline-flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:13px; }
-    .date { font-size:12px; color:#64748b; font-family:monospace; }
-    .hero { padding:24px 28px 20px; border-bottom:1px solid #2a2d3a; }
-    .hero-label { font-size:11px; color:#64748b; letter-spacing:0.08em; font-family:monospace; margin:0 0 6px; }
-    .hero-value { font-size:36px; font-weight:600; color:#6366f1; letter-spacing:-0.03em; margin:0; }
-    .hero-sub   { font-size:13px; color:#94a3b8; margin:4px 0 0; }
-    .kpi-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; border-bottom:1px solid #2a2d3a; }
-    .kpi { padding:18px 20px; border-right:1px solid #2a2d3a; }
-    .kpi:last-child { border-right:none; }
-    .kpi-label { font-size:10px; color:#64748b; letter-spacing:0.08em; font-family:monospace; margin:0 0 5px; }
-    .kpi-value { font-size:20px; font-weight:600; margin:0; letter-spacing:-0.02em; }
-    .kpi-sub   { font-size:11px; color:#64748b; margin:3px 0 0; font-family:monospace; }
-    .section { padding:20px 28px; border-bottom:1px solid #2a2d3a; }
-    .section-title { font-size:12px; color:#64748b; letter-spacing:0.06em; font-family:monospace; margin:0 0 14px; }
-    .row { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid #1e2130; }
-    .row:last-child { border-bottom:none; }
-    .row-label { font-size:13px; color:#94a3b8; }
-    .row-value { font-size:13px; font-family:monospace; font-weight:500; }
-    .pill-good { display:inline-block; padding:2px 8px; border-radius:999px; background:rgba(16,185,129,0.12); color:#10b981; font-size:11px; font-family:monospace; }
-    .pill-warn { display:inline-block; padding:2px 8px; border-radius:999px; background:rgba(251,191,36,0.12); color:#fbbf24; font-size:11px; font-family:monospace; }
-    .pill-bad  { display:inline-block; padding:2px 8px; border-radius:999px; background:rgba(251,113,133,0.12); color:#fb7185; font-size:11px; font-family:monospace; }
-    .product-rank { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #1e2130; }
-    .product-rank:last-child { border-bottom:none; }
-    .rank-num { font-size:11px; color:#475569; font-family:monospace; width:20px; }
-    .rank-bar-wrap { flex:1; }
-    .rank-name { font-size:13px; color:#e2e8f0; margin:0 0 5px; }
-    .rank-bar { height:3px; background:#6366f1; border-radius:2px; }
-    .rank-val { font-size:12px; font-family:monospace; color:#94a3b8; text-align:right; min-width:70px; }
-    .low-row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid #1e2130; }
-    .low-row:last-child { border-bottom:none; }
-    .footer { padding:16px 28px; text-align:center; color:#475569; font-size:11.5px; line-height:1.7; }
-    .footer a { color:#6366f1; text-decoration:none; }
-    .btn { display:inline-block; background:#6366f1; color:#fff; text-decoration:none; padding:11px 24px; border-radius:8px; font-size:13px; font-weight:600; margin-top:16px; }
-  </style>
-</head>
-<body>
-<div class="wrap">
-  <div class="card">
+{% extends "emails/base_email.html" %}
 
-    <!-- Header -->
-    <div class="header">
-      <div class="brand">
-        <span class="logo-mark">Z</span>
-        {{ store_name }}
-      </div>
-      <span class="date">{{ report_date }} · 22:00 EAT</span>
-    </div>
+{% block title %}Daily sales report — {{ store_name }}{% endblock %}
 
-    <!-- Hero: today's revenue -->
-    <div class="hero">
-      <p class="hero-label">TODAY'S REVENUE</p>
-      <p class="hero-value">{{ revenue }}</p>
-      <p class="hero-sub">
-        {{ transaction_count }} transactions ·
-        {% if revenue_delta %}
-          {% if revenue_delta >= 0 %}
-            <span style="color:#10b981">↗ +{{ revenue_delta }}%</span>
-          {% else %}
-            <span style="color:#fb7185">↘ {{ revenue_delta }}%</span>
-          {% endif %}
-          vs yesterday
-        {% endif %}
-      </p>
-    </div>
+{% block preview_text %}Daily sales report for {{ store_name }} — {{ revenue }}{% endblock %}
 
-    <!-- KPI strip -->
-    <div class="kpi-row">
-      <div class="kpi">
-        <p class="kpi-label">GROSS PROFIT</p>
-        <p class="kpi-value" style="color:#10b981;">{{ profit }}</p>
-        <p class="kpi-sub">{{ margin_pct }}% margin</p>
-      </div>
-      <div class="kpi">
-        <p class="kpi-label">TICKETS</p>
-        <p class="kpi-value">{{ transaction_count }}</p>
-        <p class="kpi-sub">avg {{ avg_ticket }}</p>
-      </div>
-      <div class="kpi">
-        <p class="kpi-label">CREDIT GIVEN</p>
-        <p class="kpi-value" style="color:#fbbf24;">{{ credit_total }}</p>
-        <p class="kpi-sub">{{ credit_count }} customers</p>
-      </div>
-    </div>
-
-    <!-- Payment breakdown -->
-    <div class="section">
-      <p class="section-title">PAYMENT BREAKDOWN</p>
-      {% for m in payment_mix %}
-      <div class="row">
-        <span class="row-label">{{ m.method }}</span>
-        <span class="row-value" style="color:#e2e8f0;">{{ m.pct }}% · {{ m.amount_fmt }}</span>
-      </div>
-      {% empty %}
-      <div class="row"><span class="row-label" style="color:#475569">No sales recorded today.</span></div>
-      {% endfor %}
-    </div>
-
-    <!-- Top products -->
-    {% if top_products %}
-    <div class="section">
-      <p class="section-title">TOP PRODUCTS TODAY</p>
-      {% for p in top_products %}
-      <div class="product-rank">
-        <span class="rank-num">{{ forloop.counter|stringformat:"02d" }}</span>
-        <div class="rank-bar-wrap">
-          <p class="rank-name">{{ p.product_name }}</p>
-          <div class="rank-bar" style="width:{{ p.bar_pct }}%;"></div>
+{% block header %}
+<tr><td style="padding:22px 28px;background:#13151f;border-bottom:1px solid #2a2d3a;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td>
+        <div style="font-size:15px;font-weight:600;color:#e2e8f0;">
+          <span style="display:inline-block;width:28px;height:28px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:6px;text-align:center;line-height:28px;color:#fff;font-weight:700;font-size:13px;margin-right:8px;">Z</span>
+          {{ store_name }}
         </div>
-        <span class="rank-val">{{ p.qty_sold }} sold · {{ p.revenue_fmt }}</span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
+      </td>
+      <td align="right">
+        <span style="font-size:12px;color:#64748b;font-family:monospace;">{{ report_date }} &middot; 22:00 EAT</span>
+      </td>
+    </tr>
+  </table>
+</td></tr>
+{% endblock %}
 
-    <!-- Low stock alerts -->
-    {% if low_stock %}
-    <div class="section" style="background:rgba(251,113,133,0.04);">
-      <p class="section-title" style="color:#fb7185;">⚠ LOW STOCK ALERTS</p>
-      {% for item in low_stock %}
-      <div class="low-row">
-        <span style="font-size:13px; color:#e2e8f0;">{{ item.name }}</span>
-        <span class="{% if item.stock == 0 %}pill-bad{% else %}pill-warn{% endif %}">
-          {% if item.stock == 0 %}OUT{% else %}{{ item.stock }} left{% endif %}
-        </span>
-      </div>
-      {% endfor %}
+{% block content %}
+  <!-- Hero: today's revenue -->
+  <tr><td style="padding:24px 28px 20px;border-bottom:1px solid #2a2d3a;">
+    <div style="font-size:11px;color:#64748b;letter-spacing:0.08em;font-family:monospace;margin:0 0 6px;">TODAY'S REVENUE</div>
+    <div style="font-size:36px;font-weight:600;color:#6366f1;letter-spacing:-0.03em;margin:0;">{{ revenue }}</div>
+    <div style="font-size:13px;color:#94a3b8;margin:4px 0 0;">
+      {{ transaction_count }} transactions
+      {% if revenue_delta %} &middot;
+        {% if revenue_delta >= 0 %}
+          <span style="color:#10b981;">&#8599; +{{ revenue_delta }}%</span>
+        {% else %}
+          <span style="color:#fb7185;">&#8600; {{ revenue_delta }}%</span>
+        {% endif %}
+        vs yesterday
+      {% endif %}
     </div>
-    {% endif %}
+  </td></tr>
 
-    <!-- Summary totals -->
-    <div class="section">
-      <p class="section-title">DAILY SUMMARY</p>
-      {% for row in summary_rows %}
-      <div class="row">
-        <span class="row-label">{{ row.label }}</span>
-        <span class="row-value" {% if row.color %}style="color:{{ row.color }};"{% endif %}>{{ row.value }}</span>
-      </div>
-      {% endfor %}
-    </div>
+  <!-- KPI strip -->
+  <tr><td style="border-bottom:1px solid #2a2d3a;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td width="33%" style="padding:18px 20px;border-right:1px solid #2a2d3a;">
+          <div style="font-size:10px;color:#64748b;letter-spacing:0.08em;font-family:monospace;margin:0 0 5px;">GROSS PROFIT</div>
+          <div style="font-size:20px;font-weight:600;color:#10b981;margin:0;">{{ profit }}</div>
+          <div style="font-size:11px;color:#64748b;margin:3px 0 0;font-family:monospace;">{{ margin_pct }}% margin</div>
+        </td>
+        <td width="33%" style="padding:18px 20px;border-right:1px solid #2a2d3a;">
+          <div style="font-size:10px;color:#64748b;letter-spacing:0.08em;font-family:monospace;margin:0 0 5px;">TICKETS</div>
+          <div style="font-size:20px;font-weight:600;color:#e2e8f0;margin:0;">{{ transaction_count }}</div>
+          <div style="font-size:11px;color:#64748b;margin:3px 0 0;font-family:monospace;">avg {{ avg_ticket }}</div>
+        </td>
+        <td width="33%" style="padding:18px 20px;">
+          <div style="font-size:10px;color:#64748b;letter-spacing:0.08em;font-family:monospace;margin:0 0 5px;">CREDIT GIVEN</div>
+          <div style="font-size:20px;font-weight:600;color:#fbbf24;margin:0;">{{ credit_total }}</div>
+          <div style="font-size:11px;color:#64748b;margin:3px 0 0;font-family:monospace;">{{ credit_count }} customers</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 
-    <!-- CTA -->
-    <div style="padding:20px 28px 28px; text-align:center;">
-      <p style="font-size:13px; color:#94a3b8; margin:0 0 4px;">View the full dashboard</p>
-      <a class="btn" href="{{ site_url }}/dashboard">Open Ziada Dashboard →</a>
-    </div>
+  <!-- Payment breakdown -->
+  <tr><td style="padding:20px 28px;border-bottom:1px solid #2a2d3a;">
+    <div style="font-size:12px;color:#64748b;letter-spacing:0.06em;font-family:monospace;margin:0 0 14px;">PAYMENT BREAKDOWN</div>
+    {% for m in payment_mix %}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td style="padding:9px 0;border-bottom:1px solid #1e2130;font-size:13px;color:#94a3b8;">{{ m.method }}</td>
+        <td align="right" style="padding:9px 0;border-bottom:1px solid #1e2130;font-size:13px;font-family:monospace;font-weight:500;color:#e2e8f0;">{{ m.pct }}% &middot; {{ m.amount_fmt }}</td>
+      </tr>
+    </table>
+    {% empty %}
+    <div style="font-size:13px;color:#475569;padding:9px 0;">No sales recorded today.</div>
+    {% endfor %}
+  </td></tr>
 
-    <div class="footer">
-      This report is sent daily at 22:00 Africa/Dar_es_Salaam.<br />
-      <a href="{{ site_url }}">Ziada POS</a> · <a href="mailto:support@ziadapos.com">support@ziadapos.com</a>
-    </div>
+  <!-- Top products -->
+  {% if top_products %}
+  <tr><td style="padding:20px 28px;border-bottom:1px solid #2a2d3a;">
+    <div style="font-size:12px;color:#64748b;letter-spacing:0.06em;font-family:monospace;margin:0 0 14px;">TOP PRODUCTS TODAY</div>
+    {% for p in top_products %}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td style="padding:10px 0;border-bottom:1px solid #1e2130;" valign="top">
+          <div style="font-size:11px;color:#475569;font-family:monospace;width:20px;display:inline-block;">{{ forloop.counter|stringformat:"02d" }}</div>
+          <div style="font-size:13px;color:#e2e8f0;margin:0 0 5px;display:inline-block;">{{ p.product_name }}</div>
+          <div style="height:3px;background:#6366f1;border-radius:2px;width:{{ p.bar_pct }}%;margin-top:4px;"></div>
+        </td>
+        <td align="right" style="padding:10px 0;border-bottom:1px solid #1e2130;font-size:12px;font-family:monospace;color:#94a3b8;min-width:100px;" valign="top">
+          {{ p.qty_sold }} sold &middot; {{ p.revenue_fmt }}
+        </td>
+      </tr>
+    </table>
+    {% endfor %}
+  </td></tr>
+  {% endif %}
 
+  <!-- Low stock alerts -->
+  {% if low_stock %}
+  <tr><td style="padding:20px 28px;background:rgba(251,113,133,0.04);border-bottom:1px solid #2a2d3a;">
+    <div style="font-size:12px;color:#fb7185;letter-spacing:0.06em;font-family:monospace;margin:0 0 14px;">&#9888; LOW STOCK ALERTS</div>
+    {% for item in low_stock %}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td style="padding:9px 0;border-bottom:1px solid #1e2130;font-size:13px;color:#e2e8f0;">{{ item.name }}</td>
+        <td align="right" style="padding:9px 0;border-bottom:1px solid #1e2130;">
+          {% if item.stock == 0 %}
+          <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(251,113,133,0.12);color:#fb7185;font-size:11px;font-family:monospace;">OUT</span>
+          {% else %}
+          <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(251,191,36,0.12);color:#fbbf24;font-size:11px;font-family:monospace;">{{ item.stock }} left</span>
+          {% endif %}
+        </td>
+      </tr>
+    </table>
+    {% endfor %}
+  </td></tr>
+  {% endif %}
+
+  <!-- Summary totals -->
+  <tr><td style="padding:20px 28px;border-bottom:1px solid #2a2d3a;">
+    <div style="font-size:12px;color:#64748b;letter-spacing:0.06em;font-family:monospace;margin:0 0 14px;">DAILY SUMMARY</div>
+    {% for row in summary_rows %}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td style="padding:9px 0;border-bottom:1px solid #1e2130;font-size:13px;color:#94a3b8;">{{ row.label }}</td>
+        <td align="right" style="padding:9px 0;border-bottom:1px solid #1e2130;font-size:13px;font-family:monospace;font-weight:500;{% if row.color %}color:{{ row.color }};{% else %}color:#e2e8f0;{% endif %}">{{ row.value }}</td>
+      </tr>
+    </table>
+    {% endfor %}
+  </td></tr>
+
+  <!-- CTA -->
+  <tr><td style="padding:20px 28px 28px;text-align:center;">
+    <p style="font-size:13px;color:#94a3b8;margin:0 0 8px;">View the full dashboard</p>
+    <a href="{{ site_url }}/dashboard" style="display:inline-block;background:#6366f1;color:#ffffff;text-decoration:none;padding:11px 24px;border-radius:8px;font-size:13px;font-weight:600;">Open Ziada Dashboard &rarr;</a>
+  </td></tr>
+{% endblock %}
+
+{% block footer %}
+<tr><td style="padding:16px 28px;text-align:center;border-top:1px solid #2a2d3a;">
+  <div style="font-size:11.5px;color:#475569;line-height:1.7;">
+    This report is sent daily at 22:00 Africa/Dar_es_Salaam.<br />
+    <a href="{{ site_url }}" style="color:#6366f1;text-decoration:none;">Ziada POS</a> &middot;
+    <a href="mailto:support@ziadapos.com" style="color:#6366f1;text-decoration:none;">support@ziadapos.com</a>
   </div>
-</div>
-</body>
-</html>
+</td></tr>
+{% endblock %}

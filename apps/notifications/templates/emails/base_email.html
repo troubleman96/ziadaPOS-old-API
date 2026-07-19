@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>{% block title %}Ziada POS{% endblock %}</title>
+</head>
+<body style="margin:0;padding:0;background:#0f1117;-webkit-font-smoothing:antialiased;">
+<div style="display:none;max-height:0;overflow:hidden;color:transparent;">{% block preview_text %}Ziada POS — Point of Sale &amp; Retail Management{% endblock %}</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#0f1117" style="background:#0f1117;">
+  <tr>
+    <td align="center" style="padding:32px 12px;">
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" bgcolor="#1a1d27" style="width:600px;max-width:600px;background:#1a1d27;border-radius:12px;overflow:hidden;border:1px solid #2a2d3a;">
+
+        {% block header %}
+        <tr><td align="center" style="padding:24px 32px;background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);">
+          <div style="width:40px;height:40px;background:rgba(255,255,255,0.15);border-radius:10px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;margin-bottom:10px;">Z</div>
+          <div style="font-size:18px;font-weight:600;color:#ffffff;letter-spacing:-0.01em;">Ziada POS</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;">Point of Sale &amp; Retail Management</div>
+        </td></tr>
+        {% endblock %}
+
+        <tr><td style="padding:0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            {% block content %}{% endblock %}
+          </table>
+        </td></tr>
+
+        {% block footer %}
+        <tr><td style="padding:20px 32px;text-align:center;border-top:1px solid #2a2d3a;">
+          <div style="font-size:12px;color:#475569;line-height:1.7;">
+            <div style="margin-bottom:4px;">
+              <a href="{{ site_url }}" style="color:#6366f1;text-decoration:none;font-weight:500;">Ziada POS</a>
+              &nbsp;&middot;&nbsp;
+              <a href="mailto:support@ziadapos.com" style="color:#6366f1;text-decoration:none;">support@ziadapos.com</a>
+            </div>
+            <div style="font-size:11px;color:#374151;">
+              Ziada Technologies Ltd &middot; Dar es Salaam, Tanzania
+            </div>
+          </div>
+        </td></tr>
+        {% endblock %}
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
