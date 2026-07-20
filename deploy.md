@@ -1,9 +1,9 @@
 # Ziada POS — Deployment Guide
 
 **Stack:** Django 5 API · Next.js 16 UI · PostgreSQL · MinIO object storage  
-**API target:** `api.ziadapos.com` · port `8021` (Gunicorn) · Nginx reverse proxy  
-**UI target:** `app.ziadapos.com` · static export or Node.js server  
-**Storage:** `media.camelcreatives.com` · MinIO bucket `ziada`
+**API target:** `api.ziadapos.com` · Docker (§11a), port `8096` on the host · Nginx reverse proxy  
+**UI target:** `www.ziadapos.com` (Vercel) — see the UI repo, not this one  
+**Storage:** `media.camelcreatives.com` · MinIO bucket — confirm the real name with `manage.py test_minio`; this doc and some earlier notes disagree (`ziada` vs `ziada-pos`)
 
 ---
 
@@ -80,7 +80,7 @@ ALLOWED_HOSTS=api.ziadapos.com
 DATABASE_URL=postgres://ziada:CHANGE_ME_STRONG_PASSWORD@localhost:5432/ziada_db
 
 # CORS — allow the Next.js frontend
-CORS_ALLOWED_ORIGINS=https://app.ziadapos.com
+CORS_ALLOWED_ORIGINS=https://ziadapos.com
 
 # JWT
 JWT_ACCESS_TOKEN_LIFETIME_MINUTES=60
@@ -89,7 +89,7 @@ JWT_REFRESH_TOKEN_LIFETIME_DAYS=7
 # AI (OpenRouter)
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
 OPENROUTER_MODEL=openai/gpt-4o-mini
-OPENROUTER_SITE_URL=https://app.ziadapos.com
+OPENROUTER_SITE_URL=https://ziadapos.com
 OPENROUTER_SITE_NAME=Ziada POS
 
 # Email (ZohoMail SMTP)
@@ -102,7 +102,7 @@ EMAIL_HOST_USER=noreply@ziadapos.com
 EMAIL_HOST_PASSWORD=your-zoho-app-password
 DEFAULT_FROM_EMAIL=Ziada POS <noreply@ziadapos.com>
 SERVER_EMAIL=noreply@ziadapos.com
-SITE_URL=https://app.ziadapos.com
+SITE_URL=https://ziadapos.com
 
 # Daily report schedule (Africa/Dar_es_Salaam, 24h)
 DAILY_REPORT_HOUR=22
@@ -379,7 +379,7 @@ a `db` (Postgres 16) service and an `api` (Gunicorn, 3 workers) service.
 Migrations and `collectstatic` run automatically on every container start
 (see `entrypoint.sh`). Static files are served by WhiteNoise from inside the
 container — no nginx static-file alias is required, only a reverse proxy.
-The API listens on **host port 8097** (mapped to container port 8000).
+The API listens on **host port 8096** (mapped to container port 8000).
 
 ### Prerequisites
 
@@ -448,7 +448,7 @@ serves `/static/` itself; `/media/` is served by MinIO directly when
 
 ```nginx
 location / {
-    proxy_pass         http://127.0.0.1:8097;
+    proxy_pass         http://127.0.0.1:8096;
     proxy_set_header   Host              $host;
     proxy_set_header   X-Real-IP         $remote_addr;
     proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -457,7 +457,7 @@ location / {
 }
 ```
 
-Then run certbot exactly as in § 10. Firewall (§ 11): same — port 8097 is
+Then run certbot exactly as in § 10. Firewall (§ 11): same — port 8096 is
 **not** opened externally, only reachable via the Nginx proxy on 127.0.0.1.
 
 ### Update / redeploy
@@ -472,7 +472,7 @@ docker compose up --build -d   # rebuilds the api image, re-runs migrate/collect
 | Symptom | Check |
 |---|---|
 | `api` container keeps restarting | `docker compose logs api` — usually a bad `.env` value or DB not ready yet |
-| 502 from Nginx | `docker compose ps` — is `api` healthy? `curl http://127.0.0.1:8097/api/v1/auth/login/` locally on the server |
+| 502 from Nginx | `docker compose ps` — is `api` healthy? `curl http://127.0.0.1:8096/api/v1/auth/login/` locally on the server |
 | Redirect loop over HTTPS | `SECURE_PROXY_SSL_HEADER` requires Nginx to send `X-Forwarded-Proto` — confirm the proxy block above is in place |
 | DB connection refused | `docker compose logs db` — Postgres container failing to start, often a `POSTGRES_PASSWORD` mismatch with an existing `ziada_pgdata` volume from a prior run |
 
