@@ -244,11 +244,15 @@ class StaffActivityEntrySerializer(serializers.Serializer):
 
 class StaffKPISerializer(serializers.Serializer):
     """Response body for GET /api/v1/staff/kpis/"""
-    total_staff      = serializers.IntegerField()
-    active           = serializers.IntegerField()
-    on_leave         = serializers.IntegerField()
-    inactive         = serializers.IntegerField()
-    on_shift_today   = serializers.IntegerField()
-    sales_today      = serializers.IntegerField()
-    txns_today       = serializers.IntegerField()
-    sales_this_month = serializers.IntegerField()
+    total_staff       = serializers.IntegerField()
+    active            = serializers.IntegerField()
+    on_leave          = serializers.IntegerField()
+    inactive          = serializers.IntegerField()
+    on_shift_today    = serializers.IntegerField()
+    on_duty           = serializers.IntegerField()
+    sales_today       = serializers.IntegerField()
+    txns_today        = serializers.IntegerField()
+    sales_this_month  = serializers.IntegerField()
+    total_sales_today = serializers.IntegerField()
+    avg_ticket_today  = serializers.IntegerField()
+    top_cashier       = serializers.CharField(allow_null=True)

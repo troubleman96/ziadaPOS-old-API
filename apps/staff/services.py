@@ -23,7 +23,7 @@ def annotate_queryset_with_stats(queryset):
     Adds these attributes to each User object:
       _sales_today, _txns_today, _total_sales, _avg_ticket, _txns_total
     """
-    today = timezone.now().date()
+    today = timezone.localdate()
     try:
         return queryset.annotate(
             _sales_today=Sum(
@@ -65,7 +65,7 @@ def get_staff_stats(user) -> dict:
         sales_this_month, txns_this_month,
       }
     """
-    today = timezone.now().date()
+    today = timezone.localdate()
     month_start = today.replace(day=1)
 
     try:
@@ -112,17 +112,17 @@ def get_store_kpis(store) -> dict:
     Returns:
       {
         total_staff, active, on_leave, inactive,
-        on_shift_today,
-        sales_today, txns_today,
-        sales_this_month,
+        on_shift_today, on_duty,
+        sales_today, txns_today, total_sales_today, avg_ticket_today,
+        sales_this_month, top_cashier,
       }
     """
     from apps.accounts.models import User
 
     qs    = User.objects.filter(store=store)
-    today = timezone.now().date()
+    today = timezone.localdate()
     month_start = today.replace(day=1)
-    weekday = timezone.now().weekday()  # 0=Mon … 6=Sun
+    weekday = today.weekday()  # 0=Mon … 6=Sun
 
     total    = qs.count()
     active   = qs.filter(employment_status=User.EMPLOYMENT_ACTIVE).count()
@@ -140,24 +140,40 @@ def get_store_kpis(store) -> dict:
             shift__in=[User.SHIFT_WEEKEND, User.SHIFT_FULL_DAY],
         ).count()
 
+    top_cashier = None
     try:
         from apps.transactions.models import Transaction
-        store_txns    = Transaction.objects.filter(cashier__store=store)
-        sales_today   = store_txns.filter(created_at__date=today, status="paid").aggregate(t=Sum("total"))["t"] or 0
-        txns_today    = store_txns.filter(created_at__date=today).count()
-        sales_month   = store_txns.filter(created_at__date__gte=month_start, status="paid").aggregate(t=Sum("total"))["t"] or 0
+        store_txns  = Transaction.objects.filter(cashier__store=store)
+        today_paid  = store_txns.filter(created_at__date=today, status="paid")
+        sales_today = today_paid.aggregate(t=Sum("total"))["t"] or 0
+        txns_today  = store_txns.filter(created_at__date=today).count()
+        sales_month = store_txns.filter(created_at__date__gte=month_start, status="paid").aggregate(t=Sum("total"))["t"] or 0
+        avg_ticket_today = sales_today // txns_today if txns_today else 0
+
+        top = (
+            today_paid.values("cashier__first_name", "cashier__last_name")
+            .annotate(amount=Sum("total"))
+            .order_by("-amount")
+            .first()
+        )
+        if top:
+            top_cashier = f"{top['cashier__first_name']} {top['cashier__last_name']}".strip() or None
     except Exception:
-        sales_today = txns_today = sales_month = 0
+        sales_today = txns_today = sales_month = avg_ticket_today = 0
 
     return {
-        "total_staff":      total,
-        "active":           active,
-        "on_leave":         on_leave,
-        "inactive":         inactive,
-        "on_shift_today":   on_shift,
-        "sales_today":      sales_today,
-        "txns_today":       txns_today,
-        "sales_this_month": sales_month,
+        "total_staff":       total,
+        "active":            active,
+        "on_leave":          on_leave,
+        "inactive":          inactive,
+        "on_shift_today":    on_shift,
+        "on_duty":           on_shift,
+        "sales_today":       sales_today,
+        "txns_today":        txns_today,
+        "sales_this_month":  sales_month,
+        "total_sales_today": sales_today,
+        "avg_ticket_today":  avg_ticket_today,
+        "top_cashier":       top_cashier,
     }
 
 
@@ -170,7 +186,7 @@ def get_staff_activity(user, date=None) -> list:
       { id, time, type, amount?, items?, note? }
     """
     if date is None:
-        date = timezone.now().date()
+        date = timezone.localdate()
 
     try:
         txn_qs = user.transactions.filter(
