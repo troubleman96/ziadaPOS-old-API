@@ -1,33 +1,3 @@
-"""
-apps/ai/service.py
-
-OpenRouter AI service for Ziada AI assistant.
-
-This is the core of the /ai feature:
-  1. build_store_context(store)   → assembles live store data into a structured text
-  2. build_system_prompt(store)   → creates the system prompt with store context injected
-  3. call_openrouter(messages)    → calls OpenRouter API via the openai SDK
-  4. chat(conversation, user_msg) → end-to-end: save user msg, call AI, save response
-
-Why OpenRouter?
-  - Unified API gateway for multiple LLM providers
-  - GPT-4o-mini for MVP: fast, cheap, multilingual (Swahili + English), JSON-capable
-  - Easy swap to Claude, Gemini, etc. by changing model ID
-  - Uses the openai Python SDK with a custom base_url
-
-Store context approach:
-  Instead of expensive RAG/vector search for MVP, we inject a structured
-  text summary of the store's live data directly into the system prompt.
-  This keeps it simple, fast, and accurate for small-to-medium stores.
-  The context covers: today's KPIs, low-stock items, overdue credits,
-  top-selling products, and recent transactions.
-
-Credit deduction:
-  Each successful AI response deducts 1 credit from AICredit.used.
-  If credits are exhausted, chat() returns a fallback message without
-  calling the API (to prevent unexpected charges).
-"""
-
 import logging
 from datetime import date, timedelta
 
@@ -36,35 +6,10 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-# ── Store Context Builder ─────────────────────────────────────────────────────
-
 def build_store_context(store) -> dict:
-    """
-    Build a structured dict of live store data for the AI system prompt.
-
-    Pulls from:
-      - Recent transactions (today's revenue, transaction count)
-      - Inventory (low-stock items)
-      - Credits (outstanding balances, overdue customers)
-      - Analytics (DailySummary if available)
-
-    Returns a dict with:
-      {
-        "store_name":       "Duka Kuu",
-        "today_revenue":    1842000,
-        "today_txn_count":  87,
-        "low_stock_items":  [...],
-        "overdue_credits":  [...],
-        "recent_txns":      [...],
-        "top_products":     [...],
-        "sources":          ["Sales data", "Inventory", "Credits"],
-      }
-
-    The dict is then formatted into the system prompt as structured text.
-    """
     from django.utils import timezone
 
-    today = timezone.now().date()
+    today = timezone.localdate()
     sources = []
     context = {
         "store_name":    store.name,
@@ -72,7 +17,6 @@ def build_store_context(store) -> dict:
         "today":         today.strftime("%A, %B %d, %Y"),
     }
 
-    # ── Today's sales ─────────────────────────────────────────────────────────
     try:
         from apps.transactions.models import Transaction
         from django.db.models import Count, Sum
@@ -90,9 +34,33 @@ def build_store_context(store) -> dict:
         context["today_revenue"]   = today_txns["revenue"] or 0
         context["today_profit"]    = today_txns["profit"]  or 0
         context["today_txn_count"] = today_txns["count"]   or 0
+
+        month_start = today.replace(day=1)
+        month_txns = Transaction.objects.filter(
+            store=store,
+            created_at__date__gte=month_start,
+            created_at__date__lte=today,
+            status=Transaction.STATUS_PAID,
+        ).aggregate(revenue=Sum("total"), profit=Sum("profit"), count=Count("id"))
+
+        context["month_label"]       = today.strftime("%B %Y")
+        context["month_revenue"]     = month_txns["revenue"] or 0
+        context["month_profit"]      = month_txns["profit"]  or 0
+        context["month_txn_count"]   = month_txns["count"]   or 0
+        context["month_margin_pct"]  = (
+            round(context["month_profit"] / context["month_revenue"] * 100, 1)
+            if context["month_revenue"] else 0.0
+        )
+
+        from apps.expenses.models import Expense
+        month_expenses = Expense.objects.filter(
+            store=store, created_at__date__gte=month_start, created_at__date__lte=today,
+        ).aggregate(total=Sum("amount"))
+        context["month_expenses"] = month_expenses["total"] or 0
+        context["month_net"] = context["month_profit"] - context["month_expenses"]
+
         sources.append("Sales data")
 
-        # Recent transactions (last 5) for context
         recent = Transaction.objects.filter(store=store).order_by("-created_at")[:5]
         context["recent_txns"] = [
             {
@@ -108,9 +76,12 @@ def build_store_context(store) -> dict:
     except Exception as e:
         logger.warning("Failed to load sales context: %s", e)
         context["today_revenue"] = context["today_profit"] = context["today_txn_count"] = 0
+        context["month_label"] = today.strftime("%B %Y")
+        context["month_revenue"] = context["month_profit"] = context["month_txn_count"] = 0
+        context["month_margin_pct"] = 0.0
+        context["month_expenses"] = context["month_net"] = 0
         context["recent_txns"] = []
 
-    # ── Inventory / Low stock ─────────────────────────────────────────────────
     try:
         from apps.inventory.models import Product
 
@@ -123,7 +94,6 @@ def build_store_context(store) -> dict:
         context["low_stock_items"] = list(low_stock)
         sources.append("Inventory")
 
-        # Top products by weekly_sold
         top = Product.objects.filter(
             store=store, is_active=True
         ).order_by("-weekly_sold")[:5].values("name", "price", "weekly_sold", "stock")
@@ -134,7 +104,6 @@ def build_store_context(store) -> dict:
         context["low_stock_items"] = []
         context["top_products"] = []
 
-    # ── Outstanding credits ───────────────────────────────────────────────────
     try:
         from apps.customers.models import Customer
 
@@ -159,26 +128,13 @@ def build_store_context(store) -> dict:
 
 
 def _fmt_tzs(amount: int) -> str:
-    """Format an integer as 'TZS 1,234,000'."""
     return f"TZS {amount:,}"
 
 
 def build_system_prompt(store) -> tuple[str, list[str]]:
-    """
-    Build the system prompt for the AI with live store context injected.
-
-    Returns:
-      (system_prompt: str, sources: list[str])
-
-    The system prompt:
-      1. Defines the AI's persona and language preferences
-      2. Injects live store data (today's KPIs, low stock, credits)
-      3. Sets rules for response format
-    """
     ctx = build_store_context(store)
     sources = ctx.get("sources", [])
 
-    # ── Format store data as structured text ──────────────────────────────────
     low_stock_text = ""
     if ctx["low_stock_items"]:
         lines = [
@@ -187,7 +143,7 @@ def build_system_prompt(store) -> tuple[str, list[str]]:
         ]
         low_stock_text = "LOW STOCK ITEMS (need restocking):\n" + "\n".join(lines)
     else:
-        low_stock_text = "LOW STOCK ITEMS: None — all products sufficiently stocked."
+        low_stock_text = "LOW STOCK ITEMS: None \u2014 all products sufficiently stocked."
 
     credit_text = ""
     if ctx["customers_with_credit"]:
@@ -196,7 +152,7 @@ def build_system_prompt(store) -> tuple[str, list[str]]:
             for c in ctx["customers_with_credit"]
         ]
         credit_text = (
-            f"OUTSTANDING CREDIT — Total: {_fmt_tzs(ctx['total_outstanding_credit'])}\n"
+            f"OUTSTANDING CREDIT \u2014 Total: {_fmt_tzs(ctx['total_outstanding_credit'])}\n"
             + "Customers with open balances:\n"
             + "\n".join(lines)
         )
@@ -211,25 +167,31 @@ def build_system_prompt(store) -> tuple[str, list[str]]:
         ]
         top_products_text = "TOP SELLING PRODUCTS (by weekly units):\n" + "\n".join(lines)
 
-    # ── Build the full system prompt ──────────────────────────────────────────
-    prompt = f"""You are Ziada AI — a business intelligence assistant for African retail shops.
+    prompt = f"""You are Ziada AI \u2014 a business intelligence assistant for African retail shops.
 You are talking to a staff member of **{ctx['store_name']}** ({ctx['store_area']}).
 Today is {ctx['today']}.
 
 YOUR PERSONA:
 - Helpful, concise, and business-focused
-- Fluent in both Swahili and English — respond in the same language the user writes in
-- Use simple, clear language — not overly technical
+- Fluent in both Swahili and English \u2014 respond in the same language the user writes in
+- Use simple, clear language \u2014 not overly technical
 - Address specific products, customers, and numbers from the data below
 - Sign off as "Ziada AI" when needed
 
 LIVE STORE DATA (as of right now):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 
 TODAY'S PERFORMANCE ({ctx['today']}):
   - Revenue (paid sales): {_fmt_tzs(ctx['today_revenue'])}
   - Gross profit: {_fmt_tzs(ctx['today_profit'])}
   - Transactions completed: {ctx['today_txn_count']}
+
+MONTH-TO-DATE ({ctx['month_label']}, 1st through today):
+  - Revenue: {_fmt_tzs(ctx['month_revenue'])}
+  - Gross profit: {_fmt_tzs(ctx['month_profit'])} ({ctx['month_margin_pct']}% margin)
+  - Transactions: {ctx['month_txn_count']}
+  - Operating expenses recorded: {_fmt_tzs(ctx['month_expenses'])}
+  - Net (profit − expenses): {_fmt_tzs(ctx['month_net'])}
 
 {low_stock_text}
 
@@ -237,63 +199,45 @@ TODAY'S PERFORMANCE ({ctx['today']}):
 
 {top_products_text}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 
 RESPONSE RULES:
-1. ALWAYS ground your answers in the actual data above — never make up numbers
-2. Use markdown formatting: **bold** for numbers/names, bullet lists, tables
-3. Be concise — aim for 3-5 short paragraphs max unless a detailed breakdown is requested
+1. ALWAYS ground your answers in the actual data above \u2014 never make up numbers
+2. Use markdown formatting: **bold** for numbers/names, bullet lists \u2014 avoid tables, they render poorly in this chat UI
+3. Be concise \u2014 aim for 3-5 short paragraphs max unless a detailed breakdown is requested
 4. If asked to draft a message (WhatsApp, SMS), draft it in Swahili and provide the English translation
-5. If data is missing or unclear, say so — don't invent
+5. If data is missing or unclear, say so \u2014 don't invent
 6. For financial advice (pricing, reordering), be concrete: give specific numbers from the data
-7. Tanzania context: currency is TZS (Tanzanian Shilling), VAT is 18%, M-Pesa is most common payment"""
+7. Tanzania context: currency is TZS (Tanzanian Shilling), VAT is 18%, M-Pesa is most common payment
+8. Answer the specific question asked \u2014 never reply with a generic greeting or a menu of what you "can help with"; that only applies to the very first message of a brand-new conversation
+9. Stay scoped to this shop: sales, inventory, customers, credit, staff, and expenses. Politely decline unrelated requests (general trivia, coding help, topics with no connection to running this shop) and redirect to what you can help with here"""
 
     return prompt, sources
 
 
-# ── OpenRouter API Call ───────────────────────────────────────────────────────
-
-def call_openrouter(messages: list[dict], system_prompt: str) -> dict:
+def call_ngamia(messages: list[dict], system_prompt: str, api_key: str = None) -> dict:
     """
-    Call OpenRouter with a list of messages and return the response dict.
+    Call the Ngamia AI gateway with a list of messages.
 
-    Args:
-      messages:      List of {"role": "user"|"assistant", "content": "..."}
-                     (conversation history, newest last)
-      system_prompt: The pre-built system prompt with store context
+    Ngamia is an OpenAI-compatible API gateway (https://api.ngamia.cc/v1).
+    Uses the openai Python SDK with a custom base_url.
 
-    Returns:
-      {
-        "content":           "AI response text",
-        "model":             "openai/gpt-4o-mini",
-        "prompt_tokens":     123,
-        "completion_tokens": 456,
-        "success":           True,
-      }
-
-    On failure, returns {"success": False, "error": "..."}.
-
-    Uses the openai Python SDK with OpenRouter's base_url.
-    OpenRouter is API-compatible with the OpenAI SDK.
+    `api_key` overrides the platform key — used when an organisation has
+    exhausted its free monthly credits and pasted its own Ngamia key
+    (Organisation.ngamia_api_key) to keep going on its own balance.
     """
     try:
         from openai import OpenAI
 
         client = OpenAI(
-            api_key=settings.OPENROUTER_API_KEY,
-            base_url=settings.OPENROUTER_BASE_URL,
-            default_headers={
-                # OpenRouter requests these for routing and rate-limiting
-                "HTTP-Referer": settings.OPENROUTER_SITE_URL,
-                "X-Title":      "Ziada POS AI",
-            },
+            api_key=api_key or settings.NGAMIA_API_KEY,
+            base_url=settings.NGAMIA_BASE_URL,
         )
 
-        # Build the full message list: system first, then history
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         response = client.chat.completions.create(
-            model=settings.OPENROUTER_MODEL,
+            model=settings.NGAMIA_MODEL,
             messages=full_messages,
             max_tokens=1500,
             temperature=0.7,
@@ -311,91 +255,77 @@ def call_openrouter(messages: list[dict], system_prompt: str) -> dict:
         }
 
     except Exception as exc:
-        logger.exception("OpenRouter API call failed: %s", exc)
+        logger.exception("Ngamia API call failed: %s", exc)
         return {
             "success": False,
             "error":   str(exc),
         }
 
 
-# ── End-to-end Chat ───────────────────────────────────────────────────────────
-
 def chat(conversation, user_message_content: str) -> "Message":
-    """
-    Process one turn of a conversation:
-      1. Check AI credits — return fallback if exhausted
-      2. Save the user's message
-      3. Build system prompt with live store context
-      4. Gather conversation history (last 10 messages for context window)
-      5. Call OpenRouter API
-      6. Save the assistant's response
-      7. Deduct 1 AI credit
-      8. Update conversation title (first message only)
-
-    Returns the newly created assistant Message object.
-
-    Raises:
-      ValueError: if AI credits are exhausted
-    """
     from apps.accounts.models import AICredit
 
     from .models import Message
 
-    # ── 1. Check AI credits ───────────────────────────────────────────────────
-    ai_credit = AICredit.get_or_create_current(conversation.organisation)
-    if ai_credit.remaining <= 0:
-        # Return a friendly fallback message without calling the API
-        fallback = Message.objects.create(
-            conversation=conversation,
-            role=Message.ROLE_ASSISTANT,
-            content=(
-                "Samahani — AI credits za shirika lako zimekwisha kwa mwezi huu. "
-                "Tafadhali wasiliana na msimamizi wako ili upate credits zaidi.\n\n"
-                "_Sorry — your organisation's AI credits are exhausted for this month. "
-                "Please contact your admin to get more credits._"
-            ),
-            sources_used="",
-        )
-        return fallback
+    organisation = conversation.organisation
+    ai_credit = AICredit.get_or_create_current(organisation)
 
-    # ── 2. Save user message ──────────────────────────────────────────────────
+    # Free platform credits exhausted. If the org has pasted their own Ngamia
+    # key (Settings \u2192 Integrations), keep going unmetered on their own balance
+    # instead of blocking \u2014 otherwise show the exhausted-credits fallback.
+    using_own_key = False
+    if ai_credit.remaining <= 0:
+        if organisation.ngamia_api_key:
+            using_own_key = True
+        else:
+            fallback = Message.objects.create(
+                conversation=conversation,
+                role=Message.ROLE_ASSISTANT,
+                content=(
+                    "Samahani \u2014 AI credits za shirika lako zimekwisha kwa mwezi huu. "
+                    "Unaweza kubandika Ngamia API key yako mwenyewe (Settings \u2192 Integrations) "
+                    "ili uendelee kutumia bila kikomo, au wasiliana na msimamizi wako.\n\n"
+                    "_Sorry \u2014 your organisation's free AI credits are exhausted for this month. "
+                    "Paste your own Ngamia API key in Settings \u2192 Integrations to keep going "
+                    "unlimited on your own balance, or contact your admin._"
+                ),
+                sources_used="",
+            )
+            return fallback
+
     user_msg = Message.objects.create(
         conversation=conversation,
         role=Message.ROLE_USER,
         content=user_message_content.strip(),
     )
 
-    # Update conversation preview from first user message
     if not conversation.first_message_preview:
         conversation.first_message_preview = user_message_content[:200]
-        # Auto-title: first 60 chars of first message (cleaned up)
         title = user_message_content.strip()[:60]
         conversation.title = title if title else "New conversation"
         conversation.save(update_fields=["first_message_preview", "title", "updated_at"])
 
-    # ── 3. Build system prompt ────────────────────────────────────────────────
     system_prompt, sources = build_system_prompt(conversation.store)
 
-    # ── 4. Gather conversation history ────────────────────────────────────────
-    # Use last 10 messages (5 turns) to keep context window manageable
     history = list(
         Message.objects.filter(
             conversation=conversation,
             role__in=[Message.ROLE_USER, Message.ROLE_ASSISTANT],
         ).order_by("-created_at")[:10]
     )
-    history.reverse()  # oldest first
+    history.reverse()
 
     messages_for_api = [
         {"role": msg.role, "content": msg.content}
         for msg in history
     ]
 
-    # ── 5. Call OpenRouter API ────────────────────────────────────────────────
-    result = call_openrouter(messages_for_api, system_prompt)
+    result = call_ngamia(
+        messages_for_api, system_prompt,
+        api_key=organisation.ngamia_api_key if using_own_key else None,
+    )
 
     if not result["success"]:
-        # Save a generic error message so the conversation doesn't break
         err_msg = Message.objects.create(
             conversation=conversation,
             role=Message.ROLE_ASSISTANT,
@@ -407,25 +337,25 @@ def chat(conversation, user_message_content: str) -> "Message":
         logger.error("AI response failed for conversation %s: %s", conversation.id, result.get("error"))
         return err_msg
 
-    # ── 6. Save assistant message ─────────────────────────────────────────────
     assistant_msg = Message.objects.create(
         conversation=conversation,
         role=Message.ROLE_ASSISTANT,
         content=result["content"],
-        model_used=result.get("model", settings.OPENROUTER_MODEL),
+        model_used=result.get("model", settings.NGAMIA_MODEL),
         prompt_tokens=result.get("prompt_tokens", 0),
         completion_tokens=result.get("completion_tokens", 0),
         sources_used=",".join(sources),
     )
 
-    # ── 7. Deduct AI credit ───────────────────────────────────────────────────
-    try:
-        ai_credit.used += 1
-        ai_credit.save(update_fields=["used", "updated_at"])
-    except Exception as exc:
-        logger.warning("Failed to deduct AI credit: %s", exc)
+    # Only deduct from the free platform allowance when it was actually used —
+    # calls made on the org's own Ngamia key don't count against it.
+    if not using_own_key:
+        try:
+            ai_credit.used += 1
+            ai_credit.save(update_fields=["used", "updated_at"])
+        except Exception as exc:
+            logger.warning("Failed to deduct AI credit: %s", exc)
 
-    # ── 8. Touch conversation updated_at ──────────────────────────────────────
     from django.utils import timezone
     conversation.updated_at = timezone.now()
     conversation.save(update_fields=["updated_at"])
@@ -440,8 +370,6 @@ def chat(conversation, user_message_content: str) -> "Message":
     return assistant_msg
 
 
-# ── Helper: F expression import for inventory filter ─────────────────────────
 def models_F(field_name):
-    """Return a Django F() expression. Defined here to avoid top-level import."""
     from django.db.models import F
     return F(field_name)

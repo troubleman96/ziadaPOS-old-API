@@ -16,6 +16,7 @@ Endpoints:
   POST /api/v1/ai/conversations/{id}/chat/ → continue an EXISTING conversation
   PATCH /api/v1/ai/conversations/{id}/    → rename or archive a conversation
   GET  /api/v1/ai/suggestions/            → get contextual suggested prompts
+  GET  /api/v1/ai/usage/                  → real usage log (tokens/model/date) + credit status
 
 Flow:
   1. Frontend sends POST /ai/chat/ with the first message
@@ -28,6 +29,7 @@ Flow:
 
 import logging
 
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
@@ -283,4 +285,90 @@ class AISuggestionsView(APIView):
                 },
             },
             message="AI suggestions.",
+        )
+
+
+class AIUsageView(APIView):
+    """
+    GET /api/v1/ai/usage/
+
+    Real usage log for the store's AI assistant — how it's actually being
+    used, not a mock. Backs the "View usage" link on the AI credits card.
+
+    Returns:
+      - totals: message/token counts across the store's whole history
+      - this_month: same, scoped to the current AICredit period
+      - recent: the last 50 assistant replies (model, tokens, conversation, date)
+      - ai_credits: same shape as /ai/suggestions/, for the header
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Sum, Count
+
+        from ..models import Message
+
+        store = request.user.store
+        if not store:
+            return error_response("User must belong to a store to use AI.", status=400)
+
+        organisation = store.organisation
+        assistant_messages = Message.objects.filter(
+            conversation__store=store,
+            role=Message.ROLE_ASSISTANT,
+        ).select_related("conversation")
+
+        agg = assistant_messages.aggregate(
+            message_count=Count("id"),
+            prompt_tokens=Sum("prompt_tokens"),
+            completion_tokens=Sum("completion_tokens"),
+        )
+
+        now = timezone.now()
+        this_month = assistant_messages.filter(
+            created_at__year=now.year, created_at__month=now.month,
+        )
+        month_agg = this_month.aggregate(
+            message_count=Count("id"),
+            prompt_tokens=Sum("prompt_tokens"),
+            completion_tokens=Sum("completion_tokens"),
+        )
+
+        recent = assistant_messages.order_by("-created_at")[:50]
+
+        ai_credit = AICredit.get_or_create_current(organisation)
+
+        return success_response(
+            data={
+                "totals": {
+                    "messages":          agg["message_count"] or 0,
+                    "prompt_tokens":     agg["prompt_tokens"] or 0,
+                    "completion_tokens": agg["completion_tokens"] or 0,
+                },
+                "this_month": {
+                    "messages":          month_agg["message_count"] or 0,
+                    "prompt_tokens":     month_agg["prompt_tokens"] or 0,
+                    "completion_tokens": month_agg["completion_tokens"] or 0,
+                },
+                "recent": [
+                    {
+                        "id":                 str(m.id),
+                        "conversation_title": m.conversation.title,
+                        "model_used":         m.model_used,
+                        "prompt_tokens":      m.prompt_tokens,
+                        "completion_tokens":  m.completion_tokens,
+                        "created_at":         m.created_at,
+                    }
+                    for m in recent
+                ],
+                "ai_credits": {
+                    "remaining":  ai_credit.remaining,
+                    "used":       ai_credit.used,
+                    "allocated":  ai_credit.allocated,
+                    "pct_used":   ai_credit.percentage_used,
+                },
+                "ngamia_configured": organisation.ngamia_configured,
+            },
+            message="AI usage.",
         )
