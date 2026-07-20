@@ -37,7 +37,9 @@ from apps.inventory.models import Product, StockAdjustment
 
 from ..models import Transaction, TransactionLine
 from .serializers import (
+    AttachCustomerSerializer,
     CompleteSaleSerializer,
+    EmailReceiptSerializer,
     RefundSerializer,
     TransactionListSerializer,
     TransactionSerializer,
@@ -204,6 +206,81 @@ class TransactionViewSet(ReadOnlyModelViewSet):
             data=TransactionSerializer(transaction).data,
             message=f"Transaction {transaction.txn_number} refunded.",
         )
+
+    @action(detail=True, methods=["post"], url_path="attach-customer",
+            permission_classes=[IsAuthenticated, IsStoreCashier])
+    def attach_customer(self, request, pk=None):
+        """
+        POST /api/v1/transactions/{id}/attach-customer/
+
+        Links an existing customer record to a sale that was rung up as
+        Walk-in — e.g. the cashier forgot to select the customer at checkout.
+        Referenced by "Add customer to this sale" on /transactions/[id].
+        """
+        transaction = self.get_object()
+
+        serializer = AttachCustomerSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors)
+
+        from apps.customers.models import Customer
+        try:
+            customer = Customer.objects.get(
+                id=serializer.validated_data["customer_id"],
+                store=request.user.store,
+            )
+        except Customer.DoesNotExist:
+            return error_response("Customer not found in this store.", status=404)
+
+        transaction.customer = customer
+        transaction.customer_name = customer.name
+        transaction.customer_phone = customer.phone
+        transaction.save(update_fields=["customer", "customer_name", "customer_phone", "updated_at"])
+
+        logger.info(
+            "User %s attached customer %s to transaction %s.",
+            request.user.username, customer.name, transaction.txn_number,
+        )
+        return success_response(
+            data=TransactionSerializer(transaction).data,
+            message=f"{customer.name} added to this sale.",
+        )
+
+    @action(detail=True, methods=["post"], url_path="email-receipt",
+            permission_classes=[IsAuthenticated, IsStoreCashier])
+    def email_receipt(self, request, pk=None):
+        """
+        POST /api/v1/transactions/{id}/email-receipt/
+        Body: { "email": "optional override" }  — defaults to the linked
+        customer's email, if any.
+
+        Referenced by "Email" on the receipt card in /transactions/[id].
+        """
+        transaction = self.get_object()
+
+        serializer = EmailReceiptSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors)
+
+        email = serializer.validated_data.get("email") or (
+            transaction.customer.email if transaction.customer else ""
+        )
+        if not email:
+            return error_response(
+                "No email address on file for this customer. Provide one to send the receipt.",
+                status=400,
+            )
+
+        from apps.notifications.emails import send_receipt_email
+        ok = send_receipt_email(transaction, email)
+        if not ok:
+            return error_response("Could not send the receipt email — please try again.", status=502)
+
+        logger.info(
+            "User %s emailed receipt for %s to %s.",
+            request.user.username, transaction.txn_number, email,
+        )
+        return success_response(message=f"Receipt sent to {email}.")
 
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):

@@ -53,16 +53,20 @@ class TransactionSerializer(serializers.ModelSerializer):
     Includes nested line items and computed display fields.
     """
 
-    lines        = TransactionLineSerializer(many=True, read_only=True)
-    cashier_name = serializers.SerializerMethodField()
-    item_count   = serializers.IntegerField(read_only=True)
-    sku_count    = serializers.IntegerField(read_only=True)
-    credit_info  = serializers.SerializerMethodField()
+    lines         = TransactionLineSerializer(many=True, read_only=True)
+    cashier_name  = serializers.SerializerMethodField()
+    item_count    = serializers.IntegerField(read_only=True)
+    sku_count     = serializers.IntegerField(read_only=True)
+    credit_info   = serializers.SerializerMethodField()
+    store_name    = serializers.SerializerMethodField()
+    store_address = serializers.SerializerMethodField()
+    store_phone   = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
         fields = [
             "id", "txn_number", "store", "channel",
+            "store_name", "store_address", "store_phone",
             "customer", "customer_name", "customer_phone",
             "payment_method", "payment_reference", "status",
             "subtotal", "discount_pct", "discount_amount",
@@ -79,6 +83,15 @@ class TransactionSerializer(serializers.ModelSerializer):
         if obj.cashier:
             return obj.cashier.get_full_name() or obj.cashier.username
         return "Unknown"
+
+    def get_store_name(self, obj):
+        return obj.store.name if obj.store else ""
+
+    def get_store_address(self, obj):
+        return obj.store.address if obj.store else ""
+
+    def get_store_phone(self, obj):
+        return obj.store.phone if obj.store else ""
 
     def get_credit_info(self, obj):
         """
@@ -274,3 +287,19 @@ class RefundSerializer(serializers.Serializer):
         default="",
         help_text="Reason for the refund (optional but recommended).",
     )
+
+
+# ── Attach Customer ───────────────────────────────────────────────────────────
+
+class AttachCustomerSerializer(serializers.Serializer):
+    """Input for POST /transactions/{id}/attach-customer/"""
+
+    customer_id = serializers.UUIDField()
+
+
+# ── Email Receipt ─────────────────────────────────────────────────────────────
+
+class EmailReceiptSerializer(serializers.Serializer):
+    """Input for POST /transactions/{id}/email-receipt/"""
+
+    email = serializers.EmailField(required=False, allow_blank=True, default="")
