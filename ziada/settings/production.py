@@ -40,11 +40,16 @@ X_FRAME_OPTIONS = "DENY"
 # Database — PostgreSQL required in production
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Require SSL by default (e.g. a managed/remote Postgres like RDS). Set
+# DATABASE_SSL_REQUIRE=False when Postgres is reached over a private/internal
+# network that doesn't terminate SSL itself — e.g. the docker-compose `db`
+# service, which is a stock postgres image with SSL off, reachable only on
+# the internal Docker bridge network.
 DATABASES = {
     "default": dj_database_url.config(
         default=config("DATABASE_URL"),  # will raise if not set
         conn_max_age=600,
-        ssl_require=True,
+        ssl_require=config("DATABASE_SSL_REQUIRE", cast=bool, default=True),
     )
 }
 

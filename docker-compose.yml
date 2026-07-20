@@ -24,6 +24,9 @@ services:
       # host is set to in .env, so .env can keep a localhost fallback for
       # running the app outside Docker too.
       DATABASE_URL: postgres://${POSTGRES_USER:-ziada}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-ziada_db}
+      # The `db` service is a stock Postgres image (SSL off) reachable only on
+      # the internal Docker network — no SSL to require here.
+      DATABASE_SSL_REQUIRE: "False"
     ports:
       - "8096:8000"
     volumes:
