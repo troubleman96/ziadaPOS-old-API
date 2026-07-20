@@ -43,11 +43,14 @@ from apps.transactions.models import Transaction as SaleTransaction
 from ..models import CreditMessage, CreditNote, CreditPayment, CreditTab
 from .serializers import (
     AddCreditNoteSerializer,
+    BulkSendRemindersSerializer,
     CreditCustomerRowSerializer,
     CreditMessageSerializer,
     CreditNoteSerializer,
     CreditPaymentSerializer,
     CreditTabSerializer,
+    DraftReminderSerializer,
+    IssueCreditSerializer,
     RecordPaymentSerializer,
     SendReminderSerializer,
 )
@@ -81,7 +84,7 @@ def _compute_credit_status(customer):
       - If any tab due within 7 days → status='due-soon', due_days = min days remaining
       - Otherwise → status='current', due_days = days until nearest due date
     """
-    today = timezone.now().date()
+    today = timezone.localdate()
     open_tabs = CreditTab.objects.filter(
         customer=customer,
         status__in=[CreditTab.STATUS_OPEN, CreditTab.STATUS_PARTIAL],
@@ -132,7 +135,7 @@ class CreditsDashboardView(APIView):
     def get(self, request):
         """Return full credits dashboard data."""
         store = request.user.store
-        today = timezone.now().date()
+        today = timezone.localdate()
 
         # ── All customers with open credit in this store ────────────────────
         customers_qs = Customer.objects.filter(
@@ -596,4 +599,231 @@ class WriteOffTabView(APIView):
         return success_response(
             data=CreditTabSerializer(tab).data,
             message=f"Tab written off. Customer: {tab.customer.name}.",
+        )
+
+
+# ── Issue Credit (manual) ───────────────────────────────────────────────────────
+
+class IssueCreditView(APIView):
+    """
+    POST /api/v1/credits/customers/{id}/issue-credit/
+
+    Manually issues credit to a customer with no linked POS sale — e.g. a
+    manager extending credit for goods sold outside the till, or recording an
+    existing debt when a customer is first added to the system.
+    Creates a CreditTab with transaction=None (supported by design — see
+    CreditTab.transaction help_text). Only managers may issue credit this way.
+
+    Body: { "amount": 15000, "due_date": "2026-08-15", "note": "..." }
+    """
+
+    permission_classes = [IsAuthenticated, IsStoreManager]
+
+    @db_transaction.atomic
+    def post(self, request, customer_id):
+        customer, err = _get_customer_or_404(customer_id, request.user.store)
+        if err:
+            return err
+
+        serializer = IssueCreditSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors)
+
+        data = serializer.validated_data
+        due_date = data.get("due_date") or (timezone.localdate() + timedelta(days=30))
+
+        tab = CreditTab.objects.create(
+            customer=customer,
+            store=request.user.store,
+            amount=data["amount"],
+            due_date=due_date,
+            cashier=request.user,
+        )
+
+        if data.get("note"):
+            CreditNote.objects.create(
+                customer=customer,
+                store=request.user.store,
+                body=data["note"],
+                by=request.user,
+            )
+
+        _refresh_customer_credit(customer)
+
+        logger.info(
+            "User %s manually issued TZS %s credit to customer %s (tab %s).",
+            request.user.username, data["amount"], customer.name, tab.id,
+        )
+        return created_response(
+            data=CreditTabSerializer(tab).data,
+            message=f"Credit of TZS {data['amount']:,} issued to {customer.name}.",
+        )
+
+
+# ── Bulk Reminders ────────────────────────────────────────────────────────────
+
+def _default_reminder_body(customer) -> str:
+    return (
+        f"Habari {customer.name}, unadaiwa TZS {customer.open_credit:,} katika duka letu. "
+        f"Tafadhali lipa deni lako mapema iwezekanavyo. Asante."
+    )
+
+
+class BulkSendRemindersView(APIView):
+    """
+    POST /api/v1/credits/send-all-reminders/
+
+    Sends a real SendAfrica SMS reminder to every customer in the store with
+    open_credit > 0, and logs each as a CreditMessage. If `body` is provided
+    it's used verbatim (with {name} / {amount} placeholders substituted);
+    otherwise a default per-customer message is generated.
+
+    Body: { "body": "Habari {name}, unadaiwa TZS {amount}..." }  (optional)
+    """
+
+    permission_classes = [IsAuthenticated, IsStoreManager]
+
+    def post(self, request):
+        serializer = BulkSendRemindersSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors)
+
+        template = serializer.validated_data.get("body", "").strip()
+        organisation = request.user.get_organisation
+
+        customers = Customer.objects.filter(
+            store=request.user.store,
+            is_active=True,
+            open_credit__gt=0,
+        )
+
+        if not customers.exists():
+            return success_response(
+                data={"sent": 0, "failed": 0, "total_amount": 0, "errors": []},
+                message="No customers currently owe credit — nothing to send.",
+            )
+
+        from apps.notifications.sms import SmsError, send_sms
+
+        sent = failed = 0
+        total_amount = 0
+        errors = []
+
+        for customer in customers:
+            if template:
+                body = template.replace("{name}", customer.name).replace(
+                    "{amount}", f"{customer.open_credit:,}"
+                )
+            else:
+                body = _default_reminder_body(customer)
+
+            try:
+                send_sms(organisation, customer.phone, body)
+                sent += 1
+                total_amount += customer.open_credit
+                CreditMessage.objects.create(
+                    customer=customer,
+                    store=request.user.store,
+                    kind=CreditMessage.KIND_SMS,
+                    direction=CreditMessage.DIRECTION_OUT,
+                    body=body,
+                    who=request.user.get_full_name() or request.user.username,
+                    sent_by=request.user,
+                )
+            except SmsError as exc:
+                failed += 1
+                errors.append({"customer": customer.name, "error": str(exc)})
+
+        logger.info(
+            "User %s bulk-sent credit reminders for store %s: %s sent, %s failed.",
+            request.user.username, request.user.store_id, sent, failed,
+        )
+
+        if sent and not failed:
+            message = f"Sent {sent} reminder{'s' if sent != 1 else ''} via SMS."
+        elif sent and failed:
+            message = f"Sent {sent}, {failed} failed — check SendAfrica balance/config."
+        else:
+            message = f"All {failed} reminders failed to send — check SendAfrica configuration."
+
+        return success_response(
+            data={"sent": sent, "failed": failed, "total_amount": total_amount, "errors": errors},
+            message=message,
+        )
+
+
+# ── AI Draft Reminder ─────────────────────────────────────────────────────────
+
+class DraftReminderView(APIView):
+    """
+    POST /api/v1/credits/draft-reminder/
+
+    Uses Ziada AI (Ngamia) to draft a reminder message template based on the
+    store's real aggregate credit position — for use with "Send all reminders".
+    Falls back to a plain template if the AI call fails so the feature never
+    hard-blocks the page.
+
+    Body: { "tone": "friendly" | "firm" | "final_notice" }
+    """
+
+    permission_classes = [IsAuthenticated, IsStoreCashier]
+
+    def post(self, request):
+        serializer = DraftReminderSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors)
+
+        tone = serializer.validated_data["tone"]
+        store = request.user.store
+
+        customers = Customer.objects.filter(
+            store=store, is_active=True, open_credit__gt=0,
+        )
+        count = customers.count()
+        total = sum(c.open_credit for c in customers)
+        overdue = customers.filter(
+            credit_tabs__status__in=[CreditTab.STATUS_OPEN, CreditTab.STATUS_PARTIAL],
+            credit_tabs__due_date__lt=timezone.localdate(),
+        ).distinct().count()
+
+        tone_instruction = {
+            "friendly": "warm and polite, like reminding a regular customer",
+            "firm": "clear and firm, but still respectful",
+            "final_notice": "a final notice — serious in tone, states this is the last reminder before further action",
+        }[tone]
+
+        fallback = _default_reminder_body(customers.first()) if count else (
+            "Habari {name}, unadaiwa TZS {amount} katika duka letu. Tafadhali lipa deni lako. Asante."
+        )
+
+        try:
+            from apps.ai.service import call_ngamia
+
+            prompt = (
+                "You are drafting a debt-reminder SMS template for a Tanzanian retail shop "
+                f"({store.name}). {count} customers currently owe credit, totaling "
+                f"TZS {total:,}, of which {overdue} are overdue. "
+                f"Write ONE short SMS (under 300 characters), tone: {tone_instruction}. "
+                "Write it in Swahili. Use the literal placeholders {name} and {amount} in the "
+                "message where the customer's name and owed amount should go — do not invent a "
+                "real name or amount. Reply with ONLY the SMS text, no quotes, no explanation."
+            )
+            result = call_ngamia(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="You write concise SMS templates for Tanzanian retail shops. Reply with only the message text.",
+                api_key=store.organisation.ngamia_api_key or None,
+            )
+            draft = result["content"].strip().strip('"') if result.get("success") else fallback
+        except Exception as exc:
+            logger.warning("AI draft-reminder failed, using fallback: %s", exc)
+            draft = fallback
+
+        return success_response(
+            data={
+                "draft": draft,
+                "customers_with_credit": count,
+                "total_outstanding": total,
+                "overdue_count": overdue,
+            },
+            message="Draft ready.",
         )

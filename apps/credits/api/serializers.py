@@ -221,6 +221,39 @@ class AddCreditNoteSerializer(serializers.Serializer):
     )
 
 
+class IssueCreditSerializer(serializers.Serializer):
+    """
+    Input for POST /credits/customers/{id}/issue-credit/
+
+    Manually issues credit to a customer with no linked POS sale — e.g. a
+    manager extending credit for goods sold outside the till, or recording an
+    existing debt when a customer is first added to the system.
+    """
+
+    amount = serializers.IntegerField(min_value=1)
+    due_date = serializers.DateField(required=False, allow_null=True)
+    note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class BulkSendRemindersSerializer(serializers.Serializer):
+    """
+    Input for POST /credits/send-all-reminders/
+
+    If `body` is omitted, a default per-customer reminder message is generated.
+    """
+
+    body = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
+
+
+class DraftReminderSerializer(serializers.Serializer):
+    """Input for POST /credits/draft-reminder/ — optional steer for the AI draft."""
+
+    tone = serializers.ChoiceField(
+        choices=[("friendly", "Friendly"), ("firm", "Firm"), ("final_notice", "Final notice")],
+        default="friendly",
+    )
+
+
 # ── Customer Credit Profile ───────────────────────────────────────────────────
 
 class CustomerCreditProfileSerializer(serializers.Serializer):
