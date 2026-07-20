@@ -367,6 +367,117 @@ sudo ufw status
 
 ---
 
+## 11a. Alternative: Docker Deployment
+
+Steps 3-11 above (venv, app user, gunicorn systemd unit) can be replaced
+entirely by Docker Compose. § 2 (PostgreSQL) is also replaced — Compose runs
+its own Postgres container instead. § 7 (MinIO) is unchanged either way; MinIO
+runs on a separate server regardless of how the API itself is hosted.
+
+This repo's `Dockerfile` + `docker-compose.yml` build a self-contained stack:
+a `db` (Postgres 16) service and an `api` (Gunicorn, 3 workers) service.
+Migrations and `collectstatic` run automatically on every container start
+(see `entrypoint.sh`). Static files are served by WhiteNoise from inside the
+container — no nginx static-file alias is required, only a reverse proxy.
+The API listens on **host port 8097** (mapped to container port 8000).
+
+### Prerequisites
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER   # log out/in (or `newgrp docker`) after this
+```
+
+### Deploy
+
+```bash
+cd /path/to/ziadaPOS-API   # wherever you cloned the repo
+cp .env.example .env
+nano .env
+```
+
+Fill in `.env` with real production values — same keys as § 5 above, plus:
+
+```ini
+DEBUG=False
+ALLOWED_HOSTS=api.ziadapos.com
+CORS_ALLOWED_ORIGINS=https://app.ziadapos.com
+SITE_URL=https://app.ziadapos.com
+
+# These provision the `db` container AND are used to build DATABASE_URL —
+# docker-compose.yml overrides DATABASE_URL's host to `db` automatically,
+# so the host/port in DATABASE_URL itself don't matter under Docker.
+POSTGRES_DB=ziada_db
+POSTGRES_USER=ziada
+POSTGRES_PASSWORD=<generate a strong password>
+```
+
+```bash
+docker compose up --build -d
+docker compose logs -f api        # watch startup — migrate/collectstatic, then gunicorn
+```
+
+### Create the superuser
+
+```bash
+docker compose exec api python manage.py shell -c "
+from apps.accounts.models import User
+User.objects.create_superuser(
+    username='ceo',
+    email='ceo@camelcreatives.com',
+    password='<the real password>',
+    first_name='Ziada',
+    last_name='Admin',
+    phone='0700000000',   # placeholder — phone is unique+required; change later in /admin/
+    role=User.ROLE_ADMIN,
+)
+"
+```
+
+(`phone` is the app's real login field and must be a unique 10-digit number —
+the placeholder above just satisfies that constraint for an admin-only
+account; change it to a real number from `/admin/` if this account should
+also log in through the normal phone-based login.)
+
+### Nginx reverse proxy (same as § 9, different port)
+
+Use the exact Nginx server block from § 9, but change `proxy_pass` to the
+Docker-mapped port and drop the `/static/`+`/media/` `alias` blocks (WhiteNoise
+serves `/static/` itself; `/media/` is served by MinIO directly when
+`USE_MINIO=True`):
+
+```nginx
+location / {
+    proxy_pass         http://127.0.0.1:8097;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_read_timeout 120s;
+}
+```
+
+Then run certbot exactly as in § 10. Firewall (§ 11): same — port 8097 is
+**not** opened externally, only reachable via the Nginx proxy on 127.0.0.1.
+
+### Update / redeploy
+
+```bash
+git pull
+docker compose up --build -d   # rebuilds the api image, re-runs migrate/collectstatic, zero-downtime restart of just that container
+```
+
+### Docker troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `api` container keeps restarting | `docker compose logs api` — usually a bad `.env` value or DB not ready yet |
+| 502 from Nginx | `docker compose ps` — is `api` healthy? `curl http://127.0.0.1:8097/api/v1/auth/login/` locally on the server |
+| Redirect loop over HTTPS | `SECURE_PROXY_SSL_HEADER` requires Nginx to send `X-Forwarded-Proto` — confirm the proxy block above is in place |
+| DB connection refused | `docker compose logs db` — Postgres container failing to start, often a `POSTGRES_PASSWORD` mismatch with an existing `ziada_pgdata` volume from a prior run |
+
+---
+
 ## 12. Connect the UI to the API
 
 The Next.js frontend reads the API base URL from `NEXT_PUBLIC_API_URL`.

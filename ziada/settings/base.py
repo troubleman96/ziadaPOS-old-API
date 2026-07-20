@@ -114,6 +114,7 @@ MIDDLEWARE = [
     # CORS must be first in the list so it fires before any response is sent
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # serves STATIC_ROOT directly — no nginx alias needed
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -204,6 +205,13 @@ USE_TZ = True  # All DateTimeField values are stored as UTC in the DB
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Static files are always served by WhiteNoise (via gunicorn) with compression +
+# far-future cache headers baked into hashed filenames — independent of whether
+# MEDIA is on MinIO or local disk (see STORAGES["default"] below).
+_STATICFILES_STORAGE = {
+    "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+}
+
 # ── Object Storage (MinIO) ────────────────────────────────────────────────────
 # When USE_MINIO=True, uploaded files (product images, etc.) are stored in the
 # MinIO bucket instead of the local filesystem.  MinIO speaks the S3 protocol,
@@ -230,9 +238,7 @@ if USE_MINIO:
                 "object_parameters": {"CacheControl": "max-age=86400"},
             },
         },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
+        "staticfiles": _STATICFILES_STORAGE,
     }
     # Media files are served directly from MinIO (path-style URL)
     _bucket   = config("MINIO_BUCKET_NAME", default="ziada")
@@ -242,6 +248,12 @@ if USE_MINIO:
 else:
     MEDIA_URL  = "/media/"
     MEDIA_ROOT = BASE_DIR / "media"
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": _STATICFILES_STORAGE,
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default primary key type

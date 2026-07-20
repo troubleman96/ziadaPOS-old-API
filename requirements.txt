@@ -7,6 +7,11 @@
 Django==5.0.6
 djangorestframework==3.15.2
 
+# ── Production server ─────────────────────────────────────────────────────────
+gunicorn==22.0.0               # WSGI server used in Docker/production
+whitenoise==6.7.0               # Serves static files directly from Django/gunicorn
+                                # (no nginx static-file alias required)
+
 # ── Database driver ───────────────────────────────────────────────────────────
 psycopg2-binary==2.9.9        # PostgreSQL adapter
 dj-database-url==2.1.0        # Parse DATABASE_URL env var easily

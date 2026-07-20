@@ -20,6 +20,11 @@ from .base import *  # noqa: F401, F403
 
 DEBUG = False
 
+# Gunicorn sits behind an Nginx reverse proxy that terminates TLS — trust its
+# X-Forwarded-Proto header, otherwise Django thinks every request is plain
+# HTTP and SECURE_SSL_REDIRECT below causes an infinite redirect loop.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Enforce HTTPS
 SECURE_SSL_REDIRECT = True
 SECURE_HSTS_SECONDS = 31536000          # 1 year

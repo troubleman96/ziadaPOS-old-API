@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ziada_db}
+      POSTGRES_USER: ${POSTGRES_USER:-ziada}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ziada_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ziada} -d ${POSTGRES_DB:-ziada_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Compose-network hostname for Postgres — overrides whatever DATABASE_URL
+      # host is set to in .env, so .env can keep a localhost fallback for
+      # running the app outside Docker too.
+      DATABASE_URL: postgres://${POSTGRES_USER:-ziada}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-ziada_db}
+    ports:
+      - "8097:8000"
+    volumes:
+      - ziada_static:/app/staticfiles
+      - ziada_media:/app/media
+      - ziada_logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/auth/login/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ziada_pgdata:
+  ziada_static:
+  ziada_media:
+  ziada_logs:
