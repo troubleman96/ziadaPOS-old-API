@@ -120,9 +120,11 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # Subscription gate — blocks API access for owners with inactive subscriptions.
-    # Must come after AuthenticationMiddleware but before RequestLogMiddleware.
-    "apps.subscriptions.middleware.SubscriptionAccessMiddleware",
+    # Subscription gate — disabled while the app is pre-launch. The trial-fee /
+    # paywall flow (apps/subscriptions/middleware.py) is built but not enforced
+    # yet, so new users can register and use the app freely. Re-enable this line
+    # once the real subscription/billing model ships.
+    # "apps.subscriptions.middleware.SubscriptionAccessMiddleware",
     # API request logging — must be last so request.user is populated by auth middleware
     "apps.tracking.middleware.RequestLogMiddleware",
 ]
@@ -314,25 +316,34 @@ CORS_ALLOWED_ORIGINS = config(
 CORS_ALLOW_CREDENTIALS = True
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AI / OpenRouter configuration
+# AI / Ngamia configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-# OpenRouter API key — NEVER hardcode this, always read from .env
-OPENROUTER_API_KEY = config("OPENROUTER_API_KEY", default="")
+# Ngamia API key — NEVER hardcode this, always read from .env.
+# Ngamia is an OpenAI-compatible API gateway with TZS billing via mobile money.
+# Docs: https://docs.ngamia.cc
+NGAMIA_API_KEY = config("NGAMIA_API_KEY", default="")
 
-# Model for MVP: cheap + fast. GPT-4o-mini is excellent for structured data Q&A
-OPENROUTER_MODEL = config("OPENROUTER_MODEL", default="openai/gpt-4o-mini")
+# Model string in provider/model_code format (fetch live list from GET /v1/models).
+# Using OpenRouter's GPT-4o-mini via Ngamia: cheap, fast, multilingual.
+NGAMIA_MODEL = config("NGAMIA_MODEL", default="openrouter/openai/gpt-4o-mini")
 
-# OpenRouter uses the OpenAI SDK but with a different base_url
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-# Branding sent with each request (helps OpenRouter's usage tracking)
-OPENROUTER_SITE_URL = config("OPENROUTER_SITE_URL", default="http://localhost:3000")
-OPENROUTER_SITE_NAME = config("OPENROUTER_SITE_NAME", default="Ziada POS")
+# Ngamia uses the OpenAI SDK but with a different base_url.
+# Note the /v1 suffix — the SDK appends the rest of the path itself.
+NGAMIA_BASE_URL = "https://api.ngamia.cc/v1"
 
 # Maximum tokens to use for AI context window
-# GPT-4o-mini supports 128k context — we use a fraction of that
 AI_MAX_CONTEXT_TOKENS = 4000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMS — SendAfrica (https://docs.sendafrica.online)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The platform's OWN SendAfrica key — used only to send auth OTPs (phone
+# verification) to our users. Per-organisation SMS (credit reminders, ad-hoc
+# customer messages) uses each org's own key (Organisation.sendafrica_api_key,
+# set in Settings → Integrations), never this one.
+SENDAFRICA_PLATFORM_API_KEY = config("SENDAFRICA_PLATFORM_API_KEY", default="")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Email (ZohoMail SMTP)

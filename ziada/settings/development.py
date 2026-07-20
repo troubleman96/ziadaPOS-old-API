@@ -37,10 +37,14 @@ DATABASES = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Email — print to console in dev, no need for real SMTP
+# Email — console by default in dev; set EMAIL_BACKEND in .env to send for real
+# (base.py already reads EMAIL_HOST/PORT/USER/PASSWORD from .env)
 # ─────────────────────────────────────────────────────────────────────────────
 
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_BACKEND = config(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.console.EmailBackend",
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging — verbose for development
