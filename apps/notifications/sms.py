@@ -4,13 +4,18 @@ apps/notifications/sms.py
 Central SMS dispatch module — sends via the SendAfrica API
 (https://docs.sendafrica.online).
 
-Each Organisation pastes its own API key in Settings → Integrations
-(Organisation.sendafrica_api_key). There is no platform-wide fallback key —
-SMS is disabled for an organisation until they configure one.
+Two distinct keys, two distinct purposes:
+  - Organisation.sendafrica_api_key — each business's own key, for messaging
+    THEIR customers (credit reminders, ad-hoc SMS). No platform fallback —
+    disabled until the owner configures one in Settings → Integrations.
+  - settings.SENDAFRICA_PLATFORM_API_KEY — the Ziada platform's own key, used
+    only to send auth OTPs (phone verification) to our own users. Configured
+    once in .env, not per-organisation.
 
 Functions:
-  send_sms(organisation, to, message, sender_id=None) — send one SMS
-  check_balance(organisation)                          — remaining SMS credits
+  send_sms(organisation, to, message, sender_id=None) — send via an org's own key
+  send_platform_sms(to, message)                       — send via the platform key (OTPs)
+  check_balance(organisation)                           — remaining SMS credits for an org
 """
 
 import logging
@@ -51,40 +56,28 @@ def normalize_tz_phone(raw: str) -> str:
     return digits
 
 
-def send_sms(organisation, to: str, message: str, sender_id: str | None = None) -> dict:
-    """
-    Send an SMS via SendAfrica on behalf of `organisation`.
-
-    Returns {"message_id": str, "status": str, "credits_used": int} on success.
-    Raises SmsError on failure (missing key, invalid phone, insufficient credits, etc).
-    """
-    if not organisation or not organisation.sendafrica_api_key:
-        raise SmsError(
-            "SMS is not configured for this organisation. Add a SendAfrica API key in Settings → Integrations.",
-            code="not_configured",
-        )
-
+def _send(api_key: str, to: str, message: str, sender_id: str | None, log_ctx: str) -> dict:
+    """Shared SendAfrica POST /v1/sms/ call used by both send_sms and send_platform_sms."""
     phone = normalize_tz_phone(to)
     if not phone.startswith(_TZ_PREFIXES) or len(phone) != 10:
         raise SmsError(f"'{to}' is not a valid Tanzania mobile number.", code="invalid_phone")
 
     payload = {"to": phone, "message": message}
-    from_id = sender_id or organisation.sms_sender_id
-    if from_id:
-        payload["from"] = from_id
+    if sender_id:
+        payload["from"] = sender_id
 
     try:
         resp = httpx.post(
             f"{BASE_URL}/v1/sms/",
             headers={
-                "X-API-Key": organisation.sendafrica_api_key,
+                "X-API-Key": api_key,
                 "Content-Type": "application/json",
             },
             json=payload,
             timeout=TIMEOUT,
         )
     except httpx.HTTPError as exc:
-        logger.error("SendAfrica request failed for org %s: %s", organisation.id, exc)
+        logger.error("SendAfrica request failed for %s: %s", log_ctx, exc)
         raise SmsError("Could not reach the SMS provider. Please try again.", code="network_error") from exc
 
     try:
@@ -96,19 +89,56 @@ def send_sms(organisation, to: str, message: str, sender_id: str | None = None) 
         err = data.get("error") or {}
         code = err.get("code", "error")
         msg = err.get("message", "SMS send failed.")
-        logger.warning("SendAfrica error for org %s: [%s] %s", organisation.id, code, msg)
+        logger.warning("SendAfrica error for %s: [%s] %s", log_ctx, code, msg)
         raise SmsError(msg, code=code)
 
     result = data["data"]
     logger.info(
-        "SMS sent for org %s to %s (message_id=%s, credits_used=%s)",
-        organisation.id, phone, result.get("message_id"), result.get("credits_used"),
+        "SMS sent for %s to %s (message_id=%s, credits_used=%s)",
+        log_ctx, phone, result.get("message_id"), result.get("credits_used"),
     )
     return {
         "message_id": result.get("message_id"),
         "status": result.get("status"),
         "credits_used": result.get("credits_used"),
     }
+
+
+def send_sms(organisation, to: str, message: str, sender_id: str | None = None) -> dict:
+    """
+    Send an SMS via SendAfrica on behalf of `organisation` (their own key —
+    for messaging their own customers).
+
+    Returns {"message_id": str, "status": str, "credits_used": int} on success.
+    Raises SmsError on failure (missing key, invalid phone, insufficient credits, etc).
+    """
+    if not organisation or not organisation.sendafrica_api_key:
+        raise SmsError(
+            "SMS is not configured for this organisation. Add a SendAfrica API key in Settings → Integrations.",
+            code="not_configured",
+        )
+    return _send(
+        organisation.sendafrica_api_key, to, message,
+        sender_id or organisation.sms_sender_id,
+        log_ctx=f"org {organisation.id}",
+    )
+
+
+def send_platform_sms(to: str, message: str) -> dict:
+    """
+    Send an SMS via the Ziada platform's own SendAfrica account — used only
+    for auth OTPs (phone verification), never for per-organisation messaging.
+
+    Raises SmsError with code="not_configured" if SENDAFRICA_PLATFORM_API_KEY
+    isn't set in .env.
+    """
+    platform_key = getattr(settings, "SENDAFRICA_PLATFORM_API_KEY", "")
+    if not platform_key:
+        raise SmsError(
+            "Platform SMS is not configured. Set SENDAFRICA_PLATFORM_API_KEY in .env.",
+            code="not_configured",
+        )
+    return _send(platform_key, to, message, None, log_ctx="platform")
 
 
 def check_balance(organisation) -> dict:

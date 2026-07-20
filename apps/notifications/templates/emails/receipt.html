@@ -1,0 +1,42 @@
+{% extends "emails/base_email.html" %}
+
+{% block title %}Receipt {{ txn_number }} — {{ store_name }}{% endblock %}
+
+{% block preview_text %}Your receipt from {{ store_name }} — {{ total }}{% endblock %}
+
+{% block content %}
+<tr><td style="padding:32px 36px 8px;">
+  <h2 style="font-size:18px;font-weight:600;color:#e2e8f0;margin:0 0 4px;">Receipt from {{ store_name }}</h2>
+  <p style="font-size:13px;color:#94a3b8;margin:0;">{{ created_at }}</p>
+</td></tr>
+
+<tr><td style="padding:16px 36px 0;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0f1117;border:1px dashed #2a2d3a;border-radius:8px;">
+    <tr><td style="padding:16px 18px;font-family:monospace;font-size:12px;color:#cbd5e1;line-height:1.8;">
+      <div style="text-align:center;color:#e2e8f0;font-weight:600;">{{ store_name }}</div>
+      {% if store_address %}<div style="text-align:center;color:#64748b;">{{ store_address }}</div>{% endif %}
+      <div style="border-top:1px dashed #2a2d3a;margin:8px 0;"></div>
+      <div style="display:flex;justify-content:space-between;"><span>{{ txn_number }}</span><span>{{ created_at }}</span></div>
+      <div style="border-top:1px dashed #2a2d3a;margin:8px 0;"></div>
+      {% for line in lines %}
+      <div style="display:flex;justify-content:space-between;">
+        <span>{{ line.qty }}&times; {{ line.product_name }}</span><span>{{ line.line_total }}</span>
+      </div>
+      {% endfor %}
+      <div style="border-top:1px dashed #2a2d3a;margin:8px 0;"></div>
+      <div style="display:flex;justify-content:space-between;color:#e2e8f0;font-weight:600;">
+        <span>TOTAL</span><span>{{ total }}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;color:#94a3b8;">
+        <span>{{ payment_method }}</span><span>{{ total }}</span>
+      </div>
+      <div style="border-top:1px dashed #2a2d3a;margin:8px 0;"></div>
+      <div style="text-align:center;color:#64748b;">asante sana &middot; come again</div>
+    </td></tr>
+  </table>
+</td></tr>
+
+<tr><td style="padding:20px 36px 32px;">
+  <p style="font-size:12px;color:#475569;margin:0;">Cashier: {{ cashier_name }} &middot; Till: {{ till_number }}</p>
+</td></tr>
+{% endblock %}

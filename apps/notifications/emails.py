@@ -11,7 +11,6 @@ Functions:
 """
 
 import logging
-from datetime import date, timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -123,7 +122,7 @@ def send_daily_sales_report(store=None) -> int:
     else:
         stores = list(Store.objects.filter(is_active=True).select_related("organisation"))
 
-    today   = date.today()
+    today   = timezone.localdate()
     sent    = 0
 
     for st in stores:
@@ -337,6 +336,37 @@ def send_scheduled_report(scheduled_report) -> dict:
             failed += 1
 
     return {"sent": sent, "failed": failed, "recipients": recipients}
+
+
+# ── Receipt email ─────────────────────────────────────────────────────────────
+
+def send_receipt_email(transaction, to_email: str) -> bool:
+    """
+    Email a customer-facing receipt for a completed sale.
+    Used by the "Email" button on /transactions/[id].
+    """
+    store = transaction.store
+    ctx = {
+        "store_name":     store.name if store else "",
+        "store_address":  store.address if store else "",
+        "txn_number":     transaction.txn_number,
+        "created_at":     timezone.localtime(transaction.created_at).strftime("%d %b %Y, %H:%M"),
+        "lines": [
+            {"qty": line.qty, "product_name": line.product_name, "line_total": _fmt_tzs(line.line_total)}
+            for line in transaction.lines.all()
+        ],
+        "total":          _fmt_tzs(transaction.total),
+        "payment_method": transaction.payment_method,
+        "cashier_name":   transaction.cashier.get_full_name() or transaction.cashier.username if transaction.cashier else "—",
+        "till_number":    transaction.till_number,
+        "site_url":       SITE,
+    }
+    html = render_to_string("emails/receipt.html", ctx)
+    return _send(
+        subject=f"Receipt {transaction.txn_number} — {ctx['store_name']} — {ctx['total']}",
+        to=to_email,
+        html=html,
+    )
 
 
 # ── Test email ────────────────────────────────────────────────────────────────
