@@ -32,11 +32,13 @@ from ..models import AICredit, Organisation, Store, User
 from .serializers import (
     AICreditSerializer,
     ChangePasswordSerializer,
+    MeUpdateSerializer,
     OrganisationSerializer,
     PhoneLoginSerializer,
     RegistrationSerializer,
     StaffStatsSerializer,
     StoreSerializer,
+    SwitchStoreSerializer,
     UserCreateSerializer,
     UserSerializer,
     UserUpdateSerializer,
@@ -216,7 +218,7 @@ class MeView(APIView):
         )
 
     def patch(self, request):
-        serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
+        serializer = MeUpdateSerializer(request.user, data=request.data, partial=True)
         if not serializer.is_valid():
             return error_response("Validation failed.", errors=serializer.errors, status=400)
         serializer.save()
@@ -224,6 +226,39 @@ class MeView(APIView):
         return success_response(
             data=UserSerializer(request.user).data,
             message="Profile updated successfully.",
+        )
+
+
+class SwitchStoreView(APIView):
+    """
+    POST /api/v1/accounts/me/switch-store/  body: {"store": "<uuid>"}
+
+    Lets an owner (who oversees multiple stores in one organisation) switch
+    which store their session is scoped to. Every store-scoped endpoint reads
+    request.user.store, so this is what actually makes the sidenav "switch
+    store" control take effect — not just a cosmetic UI selection.
+
+    Staff are intentionally excluded: they're scoped to one store by design.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role == User.ROLE_STAFF:
+            return error_response("Staff accounts cannot switch stores.", status=403)
+
+        serializer = SwitchStoreSerializer(data=request.data, context={"request": request})
+        if not serializer.is_valid():
+            return error_response("Validation failed.", errors=serializer.errors, status=400)
+
+        store = serializer.validated_data["store"]
+        request.user.store = store
+        request.user.save(update_fields=["store", "updated_at"])
+        logger.info("User %s switched active store to %s.", request.user.phone, store.name)
+
+        return success_response(
+            data=UserSerializer(request.user).data,
+            message=f"Switched to {store.name}.",
         )
 
 
@@ -251,6 +286,91 @@ class ChangePasswordView(APIView):
         request.user.save()
         logger.info("User %s changed their password.", request.user.phone)
         return success_response(message="Password changed successfully.")
+
+
+# ── Phone verification (OTP via SendAfrica) ────────────────────────────────────
+# Independent of email verification (ConfirmEmailView below) — a user can
+# verify either channel, both, or neither. is_phone_verified / is_email_verified
+# are separate flags on User.
+
+class SendPhoneOTPView(APIView):
+    """
+    POST /api/v1/accounts/me/verify-phone/send/
+
+    Sends a 6-digit SMS code to the logged-in user's own phone via the
+    platform's SendAfrica account (settings.SENDAFRICA_PLATFORM_API_KEY).
+    45s cooldown between sends, matching the email-resend pattern.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from apps.notifications.models import PhoneOTP
+        from apps.notifications.sms import SmsError, send_platform_sms
+
+        user = request.user
+        if user.is_phone_verified:
+            return error_response("Phone number is already verified.", status=400)
+
+        last = PhoneOTP.objects.filter(user=user).order_by("-created_at").first()
+        if last and (timezone.now() - last.created_at).total_seconds() < 45:
+            return error_response("Please wait before requesting another code.", status=429)
+
+        # Send first, persist only on success — an invalid-phone/provider
+        # failure must not leave a dead row that blocks retries on the cooldown.
+        import random
+        code = f"{random.randint(0, 999999):06d}"
+        try:
+            send_platform_sms(
+                user.phone,
+                f"Ziada POS: Namba yako ya uthibitisho ni {code}. Haitumiki baada ya dakika 5. "
+                f"Your verification code is {code}, valid for 5 minutes.",
+            )
+        except SmsError as exc:
+            return error_response(str(exc), status=400, errors={"code": exc.code})
+
+        PhoneOTP.objects.create(user=user, phone=user.phone, code=code)
+        return success_response(message=f"Code sent to {user.phone}.")
+
+
+class VerifyPhoneOTPView(APIView):
+    """
+    POST /api/v1/accounts/me/verify-phone/confirm/
+    Body: { "code": "482910" }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from apps.notifications.models import PhoneOTP
+
+        user = request.user
+        if user.is_phone_verified:
+            return error_response("Phone number is already verified.", status=400)
+
+        code = str(request.data.get("code", "")).strip()
+        if not code:
+            return error_response("Validation failed.", errors={"code": ["This field is required."]})
+
+        otp = PhoneOTP.objects.filter(user=user, consumed=False).order_by("-created_at").first()
+        if not otp or otp.is_expired():
+            return error_response("Code expired. Request a new one.", status=400, errors={"code": "otp_expired"})
+
+        if otp.attempts >= 5:
+            return error_response("Too many attempts. Request a new code.", status=400, errors={"code": "otp_locked"})
+
+        if otp.code != code:
+            otp.attempts += 1
+            otp.save(update_fields=["attempts"])
+            return error_response("Incorrect code.", status=400, errors={"code": "otp_invalid"})
+
+        otp.consumed = True
+        otp.save(update_fields=["consumed"])
+        user.is_phone_verified = True
+        user.save(update_fields=["is_phone_verified", "updated_at"])
+
+        logger.info("User %s verified their phone number.", user.phone)
+        return success_response(message="Phone number verified.")
 
 
 # ── User management ───────────────────────────────────────────────────────────

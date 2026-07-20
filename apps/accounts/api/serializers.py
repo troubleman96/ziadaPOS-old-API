@@ -45,6 +45,13 @@ class OrganisationSerializer(serializers.ModelSerializer):
     sendafrica_api_key_masked = serializers.SerializerMethodField()
     sms_configured = serializers.BooleanField(read_only=True)
 
+    # Personal Ngamia key — same write-only / masked-read pattern as SendAfrica.
+    ngamia_api_key = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=True,
+    )
+    ngamia_api_key_masked = serializers.SerializerMethodField()
+    ngamia_configured = serializers.BooleanField(read_only=True)
+
     class Meta:
         model  = Organisation
         fields = [
@@ -53,6 +60,7 @@ class OrganisationSerializer(serializers.ModelSerializer):
             "country", "currency", "plan", "max_stores",
             "ai_credits_monthly", "trial_ends_at",
             "sendafrica_api_key", "sendafrica_api_key_masked", "sms_sender_id", "sms_configured",
+            "ngamia_api_key", "ngamia_api_key_masked", "ngamia_configured",
             "store_count", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at", "max_stores"]
@@ -63,6 +71,10 @@ class OrganisationSerializer(serializers.ModelSerializer):
     def get_sendafrica_api_key_masked(self, obj):
         key = obj.sendafrica_api_key
         return f"SA-••••{key[-4:]}" if key else ""
+
+    def get_ngamia_api_key_masked(self, obj):
+        key = obj.ngamia_api_key
+        return f"ngm_••••{key[-4:]}" if key else ""
 
 
 # ── Store ─────────────────────────────────────────────────────────────────────
@@ -425,6 +437,27 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             "can_refund", "can_discount", "can_view_reports",
             "is_active",
         ]
+
+
+class MeUpdateSerializer(serializers.ModelSerializer):
+    """Self-service profile update. Deliberately excludes store/role/permission
+    fields — those are privileged and must go through UserViewSet (owner-only)
+    or the dedicated switch-store endpoint."""
+
+    class Meta:
+        model  = User
+        fields = ["email", "first_name", "last_name", "avatar_hue"]
+
+
+class SwitchStoreSerializer(serializers.Serializer):
+    store = serializers.PrimaryKeyRelatedField(queryset=Store.objects.all())
+
+    def validate_store(self, store):
+        user = self.context["request"].user
+        org = user.get_organisation
+        if user.role != User.ROLE_ADMIN and (not org or store.organisation_id != org.id):
+            raise serializers.ValidationError("That store is not part of your organisation.")
+        return store
 
 
 class StaffStatsSerializer(serializers.Serializer):

@@ -100,8 +100,8 @@ class Organisation(BaseModel):
     )
 
     ai_credits_monthly = models.PositiveIntegerField(
-        default=5000,
-        help_text="Total AI credits allocated per month.",
+        default=500,
+        help_text="Total free AI credits allocated per month (platform-funded via Ngamia).",
     )
 
     # Plan tier — synced from Subscription.status when admin activates
@@ -142,12 +142,27 @@ class Organisation(BaseModel):
         help_text="Approved custom SMS sender ID. Falls back to 'SendAfrika' if unset or unapproved.",
     )
 
+    # ── Personal Ngamia AI key ─────────────────────────────────────────────────
+    # Every organisation gets `ai_credits_monthly` free credits, funded by the
+    # platform's own Ngamia account. Once exhausted, an owner can paste their
+    # own Ngamia key here (Settings → Integrations) to keep using the AI
+    # assistant on their own account/balance, unlimited by our monthly cap.
+    ngamia_api_key = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Personal Ngamia API key (starts with 'ngm_'). Used once the free monthly AI credits run out.",
+    )
+
     def __str__(self):
         return self.name
 
     @property
     def sms_configured(self):
         return bool(self.sendafrica_api_key)
+
+    @property
+    def ngamia_configured(self):
+        return bool(self.ngamia_api_key)
 
     @property
     def active_subscription(self):

@@ -6,7 +6,10 @@ Mounted at: /api/v1/accounts/
 
 Endpoints:
   GET/PATCH   /api/v1/accounts/me/                     → current user profile + subscription status
+  POST        /api/v1/accounts/me/switch-store/        → owner switches active store
   POST        /api/v1/accounts/me/change-password/     → change password
+  POST        /api/v1/accounts/me/verify-phone/send/    → send phone OTP (SendAfrica)
+  POST        /api/v1/accounts/me/verify-phone/confirm/ → verify phone OTP
   GET/POST    /api/v1/accounts/users/                  → list / create staff
   GET/PATCH   /api/v1/accounts/users/{id}/             → staff detail / update
   GET         /api/v1/accounts/users/{id}/stats/       → staff performance stats
@@ -27,8 +30,11 @@ from .views import (
     MeView,
     OrganisationSmsBalanceView,
     OrganisationView,
+    SendPhoneOTPView,
     StoreViewSet,
+    SwitchStoreView,
     UserViewSet,
+    VerifyPhoneOTPView,
 )
 
 router = DefaultRouter()
@@ -38,7 +44,10 @@ router.register(r"stores", StoreViewSet, basename="account-store")
 
 urlpatterns = [
     path("me/",                 MeView.as_view(),             name="me"),
+    path("me/switch-store/",    SwitchStoreView.as_view(),    name="switch-store"),
     path("me/change-password/", ChangePasswordView.as_view(), name="change-password"),
+    path("me/verify-phone/send/",    SendPhoneOTPView.as_view(),   name="verify-phone-send"),
+    path("me/verify-phone/confirm/", VerifyPhoneOTPView.as_view(), name="verify-phone-confirm"),
     path("organisation/",       OrganisationView.as_view(),   name="organisation"),
     path("organisation/sms-balance/", OrganisationSmsBalanceView.as_view(), name="organisation-sms-balance"),
     path("ai-credits/",         AICreditView.as_view(),       name="ai-credits"),
