@@ -27,6 +27,7 @@ from django.db import models
 from django.db.models import Count, Max, Min, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth
 from django.db.models.functions import ExtractHour
+from django.utils import timezone
 
 from apps.transactions.models import Transaction, TransactionLine
 
@@ -269,6 +270,14 @@ def get_kpi_summary(store, start_date: date, end_date: date) -> dict:
         discount_amount__gt=0,
     ).aggregate(disc_total=Sum("discount_amount"), disc_count=Count("id"))
 
+    # Operating expenses (rent, salaries, etc.) — separate from COGS, own model
+    from apps.expenses.models import Expense
+    exp_agg = Expense.objects.filter(
+        store=store,
+        created_at__date__gte=start_date,
+        created_at__date__lte=end_date,
+    ).aggregate(exp_total=Sum("amount"), exp_count=Count("id"))
+
     return {
         "revenue":           total_revenue,
         "profit":            total_profit,
@@ -280,6 +289,8 @@ def get_kpi_summary(store, start_date: date, end_date: date) -> dict:
         "refund_total":      agg["refunds"] or 0,
         "discount_amount":   disc_agg["disc_total"] or 0,
         "discounted_count":  disc_agg["disc_count"] or 0,
+        "expense_amount":    exp_agg["exp_total"] or 0,
+        "expense_count":     exp_agg["exp_count"] or 0,
         # Period-over-period deltas
         "revenue_delta_pct":      pct_delta(total_revenue, prior_revenue),
         "transaction_delta_pct":  pct_delta(transactions, prior_txns),
@@ -355,10 +366,15 @@ def parse_date_range(query_params) -> tuple[date, date]:
     """
     Parse ?range=7d|30d|90d|ytd or ?date_from=...&date_to=... from request query params.
 
+    `query_params` is usually a raw request.query_params dict (strings), but
+    callers that pass a DRF serializer's validated_data (e.g. reports'
+    GenerateReportSerializer, which declares date_from/date_to as DateField)
+    will already have real `date` objects here — handle both.
+
     Returns (start_date, end_date) as Python date objects.
     Default: last 30 days.
     """
-    today = date.today()
+    today = timezone.localdate()
 
     # Explicit date range takes priority
     date_from = query_params.get("date_from")
@@ -366,8 +382,8 @@ def parse_date_range(query_params) -> tuple[date, date]:
     if date_from and date_to:
         try:
             return (
-                date.fromisoformat(date_from),
-                date.fromisoformat(date_to),
+                date_from if isinstance(date_from, date) else date.fromisoformat(date_from),
+                date_to   if isinstance(date_to, date)   else date.fromisoformat(date_to),
             )
         except ValueError:
             pass  # Fall through to range param
@@ -766,7 +782,7 @@ def get_customer_analytics(store, start_date: date, end_date: date) -> dict:
     # ── Retention Cohorts ─────────────────────────────────────────────────────
     # Cohort M = customers whose FIRST EVER transaction at this store was in month M.
     # m1, m2, m3 = count of those customers who came back in M+1, M+2, M+3.
-    today = date.today()
+    today = timezone.localdate()
 
     # Build last 4 complete-ish months (current month included as partial)
     cohort_month_starts = []
@@ -884,13 +900,12 @@ def get_cashflow(store, start_date: date, end_date: date) -> dict:
       totals           — {inflow, cogs, opex, net}
       daily            — [{date, label, inflow, cogs, opex, net}] (day-by-day)
       running_balance  — [{date, label, balance}] cumulative net from period start
-      expense_breakdown — [{name, amount, pct}] COGS is the only tracked expense
+      expense_breakdown — [{name, amount, pct}] COGS + real recorded Expenses by category
       payment_inflow   — same as payment-mix (revenue by method)
       credit_outstanding — {total, customer_count, overdue_count}
 
-    NOTE: OPEX (operating expenses: rent, wages, transport) is NOT currently
-    tracked in the data model. The `opex` field returns 0 with a note.
-    A future "Expenses" feature will populate this field.
+    OPEX (operating expenses: rent, wages, transport, ...) comes from the
+    Expense model (apps.expenses), recorded by the store on the /expenses page.
     """
     # ── Daily Cashflow from DailySummary ───────────────────────────────────────
     summaries = {
@@ -902,20 +917,33 @@ def get_cashflow(store, start_date: date, end_date: date) -> dict:
         )
     }
 
+    # Expenses are their own model (not part of DailySummary), grouped by local day.
+    from apps.expenses.models import Expense
+    expense_daily_qs = (
+        Expense.objects
+        .filter(store=store, created_at__date__gte=start_date, created_at__date__lte=end_date)
+        .annotate(local_date=TruncDate("created_at"))
+        .values("local_date")
+        .annotate(amount=Sum("amount"))
+    )
+    expense_day_map = {row["local_date"]: row["amount"] or 0 for row in expense_daily_qs}
+
     daily = []
     running_bal = 0
     running_balance = []
-    total_inflow = total_cogs = total_net = 0
+    total_inflow = total_cogs = total_opex = total_net = 0
 
     current = start_date
     while current <= end_date:
         s = summaries.get(current)
         inflow = (s.revenue + s.credit_revenue) if s else 0
         cogs   = s.cost_total                    if s else 0
-        net    = inflow - cogs                   # OPEX = 0 for now
+        opex   = expense_day_map.get(current, 0)
+        net    = inflow - cogs - opex
 
         total_inflow += inflow
         total_cogs   += cogs
+        total_opex   += opex
         total_net    += net
         running_bal  += net
 
@@ -925,7 +953,7 @@ def get_cashflow(store, start_date: date, end_date: date) -> dict:
             "label":  lbl,
             "inflow": inflow,
             "cogs":   cogs,
-            "opex":   0,       # Not tracked yet
+            "opex":   opex,
             "net":    net,
         })
         running_balance.append({
@@ -935,23 +963,27 @@ def get_cashflow(store, start_date: date, end_date: date) -> dict:
         })
         current += timedelta(days=1)
 
-    # ── Expense Breakdown ─────────────────────────────────────────────────────
-    # Only COGS is tracked; OPEX categories will be added when expense tracking ships.
-    total_expenses = total_cogs  # will grow when OPEX is tracked
+    # ── Expense Breakdown: COGS + real Expense categories ──────────────────────
+    total_expenses = total_cogs + total_opex
     expense_breakdown = [
         {
             "name":   "Cost of Goods",
             "amount": total_cogs,
-            "pct":    round(total_cogs  / total_inflow * 100, 1) if total_inflow else 0,
+            "pct":    round(total_cogs / total_inflow * 100, 1) if total_inflow else 0,
         },
     ]
-    # Placeholder rows (0) so the UI can show the full breakdown structure
-    for placeholder in ["Rent & Utilities", "Staff Wages", "Transport", "Other OPEX"]:
+    category_qs = (
+        Expense.objects
+        .filter(store=store, created_at__date__gte=start_date, created_at__date__lte=end_date)
+        .values("category")
+        .annotate(amount=Sum("amount"))
+        .order_by("-amount")
+    )
+    for row in category_qs:
         expense_breakdown.append({
-            "name":   placeholder,
-            "amount": 0,
-            "pct":    0.0,
-            "_note": "OPEX tracking not yet enabled",
+            "name":   row["category"],
+            "amount": row["amount"] or 0,
+            "pct":    round((row["amount"] or 0) / total_inflow * 100, 1) if total_inflow else 0,
         })
 
     # ── Payment Inflow (reuse existing helper) ─────────────────────────────────
@@ -975,7 +1007,7 @@ def get_cashflow(store, start_date: date, end_date: date) -> dict:
             customers=Count("customer_id", distinct=True),
         )
         from django.utils import timezone as tz
-        overdue_count = open_tabs.filter(due_date__lt=tz.now().date()).count()
+        overdue_count = open_tabs.filter(due_date__lt=tz.localdate()).count()
         credit_outstanding = {
             "total":          credit_agg["total"]     or 0,
             "customer_count": credit_agg["customers"] or 0,
@@ -988,10 +1020,9 @@ def get_cashflow(store, start_date: date, end_date: date) -> dict:
         "totals": {
             "inflow":    total_inflow,
             "cogs":      total_cogs,
-            "opex":      0,
+            "opex":      total_opex,
             "net":       total_net,
             "net_margin_pct": round(total_net / total_inflow * 100, 1) if total_inflow else 0.0,
-            "opex_note": "Operating expense tracking not yet enabled.",
         },
         "daily":              daily,
         "running_balance":    running_balance,
@@ -1017,7 +1048,7 @@ def get_dashboard_data(store) -> dict:
     NOTE: recent_transactions is served by the existing
     GET /api/v1/transactions/ endpoint (page 1, latest first).
     """
-    today = date.today()
+    today = timezone.localdate()
 
     # ── Today's KPIs ──────────────────────────────────────────────────────────
     kpis_today = get_kpi_summary(store, today, today)
@@ -1050,6 +1081,23 @@ def get_dashboard_data(store) -> dict:
     )
     hour_map = {row["local_hour"]: row for row in hourly_qs}
 
+    # Expenses are their own model (not a Transaction), so a separate hourly query.
+    from apps.expenses.models import Expense
+    expense_hourly_qs = (
+        Expense.objects
+        .filter(store=store, created_at__date=today)
+        .annotate(utc_hour=ExtractHour("created_at"))
+        .annotate(
+            local_hour=models.ExpressionWrapper(
+                (models.F("utc_hour") + 3) % 24,
+                output_field=models.IntegerField(),
+            )
+        )
+        .values("local_hour")
+        .annotate(expense_amount=Sum("amount"))
+    )
+    expense_hour_map = {row["local_hour"]: row["expense_amount"] or 0 for row in expense_hourly_qs}
+
     hourly_today = [
         {
             "hour":            hr,
@@ -1058,6 +1106,7 @@ def get_dashboard_data(store) -> dict:
             "profit":          (hour_map.get(hr, {}).get("profit")          or 0),
             "discount_amount": (hour_map.get(hr, {}).get("discount_amount") or 0),
             "credit_amount":   (hour_map.get(hr, {}).get("credit_amount")   or 0),
+            "expense_amount":  expense_hour_map.get(hr, 0),
             "txn_count":       (hour_map.get(hr, {}).get("txn_count")       or 0),
         }
         for hr in range(7, 21)

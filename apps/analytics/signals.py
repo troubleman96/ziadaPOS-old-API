@@ -19,6 +19,7 @@ import logging
 
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,11 @@ def connect_signals():
         from apps.analytics.services import rebuild_daily_summary
 
         try:
-            target_date = instance.created_at.date()
+            # .date() on a UTC-aware datetime gives the UTC calendar date, not
+            # the store's local (Africa/Dar_es_Salaam) one — a sale at 22:16
+            # UTC is already 01:16 the next day in EAT. Convert to local time
+            # first so "today's" summary is keyed to the correct business day.
+            target_date = timezone.localtime(instance.created_at).date()
             rebuild_daily_summary(store=instance.store, target_date=target_date)
             logger.debug(
                 "DailySummary rebuilt for store=%s date=%s after transaction %s",
